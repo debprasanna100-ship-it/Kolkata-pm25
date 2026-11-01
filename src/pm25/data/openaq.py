@@ -42,18 +42,85 @@ def _session() -> requests.Session:
     return session
 
 
-def _get(session: requests.Session, url: str, params: dict, retries: int = 4) -> dict:
+def _get(session: requests.Session, url: str, params: dict, retries: int = 8) -> dict:
+    """GET with pacing and 429 patience.
+
+    OpenAQ v3 free tier: 60 requests/min and 2,000 requests/hour. The throttle
+    below keeps us under the minute cap by construction; the backoff handles
+    the moment the hour cap bites. `x-ratelimit-reset` tells us when the
+    window restarts - honour it instead of hammering (repeated 429s can earn
+    a temporary ban per the OpenAQ docs).
+    """
+    last_status = "unknown"
     for attempt in range(retries):
+        _throttle()
         response = session.get(url, params=params, timeout=60)
+        last_status = f"HTTP {response.status_code}"
         if response.status_code == 200:
             return response.json()
         if response.status_code == 429:
-            wait = 2**attempt
-            log.warning("rate limited, sleeping %ds", wait)
+            wait = _rate_limit_wait(response, attempt)
+            log.warning(
+                "rate limited (x-ratelimit-remaining=%s), sleeping %.0fs",
+                response.headers.get("x-ratelimit-remaining", "?"), wait,
+            )
             time.sleep(wait)
             continue
         raise OpenAQError(f"{response.status_code} for {url}: {response.text[:300]}")
-    raise OpenAQError(f"gave up on {url}")
+    raise OpenAQError(
+        f"gave up on {url} after {retries} attempts (last: {last_status}). "
+        "OpenAQ free tier allows 60 requests/min and 2,000/hour - the hour window is "
+        "probably exhausted. Wait a few minutes and rerun: fetched chunks are cached "
+        "under data/raw/openaq_cache/ and the run resumes where it stopped."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit helpers
+# ---------------------------------------------------------------------------
+
+_MIN_REQUEST_INTERVAL = 1.05      # seconds -> ~57 requests/min, under the 60 cap
+_MAX_429_WAIT_S = 900.0           # never sleep more than 15 min on one 429
+_last_request_monotonic = 0.0
+
+
+def _throttle() -> None:
+    """Sleep just enough to keep a minimum interval between requests."""
+    global _last_request_monotonic
+    now = time.monotonic()
+    wait = _last_request_monotonic + _MIN_REQUEST_INTERVAL - now
+    if wait > 0:
+        time.sleep(wait)
+    _last_request_monotonic = time.monotonic()
+
+
+def _rate_limit_wait(response: requests.Response, attempt: int) -> float:
+    """Seconds to sleep on a 429: honour Retry-After / x-ratelimit-reset when
+    they carry usable information, otherwise exponential backoff."""
+    retry_after = response.headers.get("Retry-After")
+    if retry_after:
+        try:
+            return min(float(retry_after) + 1.0, _MAX_429_WAIT_S)
+        except ValueError:
+            pass
+
+    reset = response.headers.get("x-ratelimit-reset")
+    if reset:
+        try:
+            value = float(reset)
+            # Epoch timestamp vs seconds-until-reset: distinguish by magnitude.
+            seconds = value - time.time() if value > 1e9 else value
+            if seconds > _MAX_429_WAIT_S:
+                raise OpenAQError(
+                    f"OpenAQ hourly quota exhausted; resets in ~{seconds / 60:.0f} min. "
+                    "Wait and rerun - fetched chunks are cached and the run resumes."
+                )
+            if seconds > 0:
+                return seconds + 1.0
+        except ValueError:
+            pass
+
+    return min(2.0 ** attempt, 60.0)
 
 
 def find_locations(session, station: Station, radius_m: int = 25000) -> list[dict]:
@@ -79,39 +146,70 @@ def _sensor_ids(location: dict, parameters: list[str]) -> dict[str, int]:
     return out
 
 
-def fetch_sensor(session, sensor_id: int, start: datetime, end: datetime) -> pd.DataFrame:
-    """Hourly series for one sensor, paginated."""
-    rows: list[dict] = []
+def fetch_sensor(session, sensor_id: int, start: datetime, end: datetime,
+                 cfg=None) -> pd.DataFrame:
+    """Hourly series for one sensor, paginated.
+
+    Every fetched 30-day chunk is cached under data/raw/openaq_cache/. A run
+    that dies (rate limit, network, Ctrl-C) resumes from disk on the next
+    attempt instead of re-paying the API quota - with the free tier's
+    2,000 requests/hour cap, that is the difference between finishing and
+    never finishing.
+    """
+    cache_dir = None
+    if cfg is not None:
+        cache_dir = ensure_dir(cfg.path("raw") / "openaq_cache")
+
+    parts: list[pd.DataFrame] = []
     cursor = start
     while cursor < end:
         chunk_end = min(cursor + timedelta(days=30), end)
-        page = 1
-        while True:
-            payload = _get(
-                session,
-                f"{BASE}/sensors/{sensor_id}/measurements",
-                {
-                    "datetime_from": cursor.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "datetime_to": chunk_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "limit": 1000,
-                    "page": page,
-                },
-            )
-            results = payload.get("results", [])
-            if not results:
-                break
-            for item in results:
-                period = item.get("period") or {}
-                stamp = (period.get("datetimeFrom") or {}).get("utc")
-                rows.append({"time": stamp, "value": item.get("value")})
-            if len(results) < 1000:
-                break
-            page += 1
-            if page > 60:
-                break
+        cache_file = None
+        if cache_dir is not None:
+            cache_file = cache_dir / f"{sensor_id}_{cursor:%Y%m%d}_{chunk_end:%Y%m%d}.csv"
+
+        if cache_file is not None and cache_file.exists():
+            chunk_df = pd.read_csv(cache_file)
+        else:
+            rows: list[dict] = []
+            page = 1
+            while True:
+                payload = _get(
+                    session,
+                    f"{BASE}/sensors/{sensor_id}/measurements",
+                    {
+                        "datetime_from": cursor.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "datetime_to": chunk_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "limit": 1000,
+                        "page": page,
+                    },
+                )
+                results = payload.get("results", [])
+                if not results:
+                    break
+                for item in results:
+                    period = item.get("period") or {}
+                    stamp = (period.get("datetimeFrom") or {}).get("utc")
+                    rows.append({"time": stamp, "value": item.get("value")})
+                if len(results) < 1000:
+                    break
+                page += 1
+                if page > 60:
+                    break
+            chunk_df = pd.DataFrame(rows, columns=["time", "value"])
+            if cache_file is not None:
+                # Empty months are cached too: "no data here" is an answer we
+                # should not pay for twice. Explicit columns keep the cached
+                # file readable (a headerless empty CSV would fail pd.read_csv
+                # on resume).
+                chunk_df.to_csv(cache_file, index=False)
+
+        parts.append(chunk_df)
         cursor = chunk_end
-        time.sleep(0.2)
-    return pd.DataFrame(rows)
+
+    if not parts:
+        return pd.DataFrame(columns=["time", "value"])
+    return pd.concat(parts, ignore_index=True)
 
 
 def fetch(cfg) -> pd.DataFrame:
@@ -139,7 +237,7 @@ def fetch(cfg) -> pd.DataFrame:
 
         merged: pd.DataFrame | None = None
         for name, sensor_id in sensors.items():
-            series = fetch_sensor(session, sensor_id, start, end)
+            series = fetch_sensor(session, sensor_id, start, end, cfg=cfg)
             if series.empty:
                 continue
             series["time"] = pd.to_datetime(series["time"], utc=True, errors="coerce")

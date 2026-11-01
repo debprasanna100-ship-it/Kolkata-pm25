@@ -18,3 +18,7 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# accidental secret files (keep local, never commit)
+example.env
+*.env.bak

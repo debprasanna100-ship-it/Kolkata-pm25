@@ -202,6 +202,13 @@ cp .env.example .env
 python -m pm25.cli build --mode live --start 2023-01-01 --end 2024-12-31
 ```
 
+**OpenAQ rate limits (free tier): 60 requests/min, 2,000/hour.** A 2-year build for
+4 stations is ~600 measurement requests; the client throttles itself below the minute
+cap (so a clean run takes ~10 minutes) and backs off using `x-ratelimit-reset` when
+the hour cap bites. Every fetched 30-day chunk is cached under `data/raw/openaq_cache/`
+— if a run dies or gives up, just rerun the same command and it resumes from disk
+instead of re-paying the quota. If you see "resets in ~N min", wait and rerun.
+
 | Source | Provides | Cost |
 |---|---|---|
 | OpenAQ v3 | CPCB station PM2.5, PM10, NO2, SO2, CO, O3 | free key |
