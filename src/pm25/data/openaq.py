@@ -23,7 +23,10 @@ from ..utils import ensure_dir, get_logger
 log = get_logger("pm25.openaq")
 
 BASE = "https://api.openaq.org/v3"
-PARAMETER_IDS = {"pm25": 2, "pm10": 1, "no2": 7, "so2": 9, "co": 8, "o3": 10}
+# Pollutant names this pipeline understands. Matching is done by NAME, not id:
+# v2 and v3 use different numeric parameter ids (no2 is 7 in v2, 5 in v3), and
+# the same name can even carry two ids within one v3 location payload.
+PARAMETER_NAMES = {"pm25", "pm10", "no2", "so2", "co", "o3"}
 
 
 class OpenAQError(RuntimeError):
@@ -58,6 +61,14 @@ def _get(session: requests.Session, url: str, params: dict, retries: int = 8) ->
         last_status = f"HTTP {response.status_code}"
         if response.status_code == 200:
             return response.json()
+        if response.status_code >= 500:
+            # Transient server errors happen on the measurements endpoint;
+            # back off like a rate limit. A sensor that keeps 500ing is
+            # handled by the caller, which moves on to the next candidate.
+            wait = min(2.0 ** attempt, 30.0)
+            log.warning("HTTP %d from %s, retrying in %.0fs", response.status_code, url, wait)
+            time.sleep(wait)
+            continue
         if response.status_code == 429:
             wait = _rate_limit_wait(response, attempt)
             log.warning(
@@ -142,13 +153,15 @@ def _sensor_ids(location: dict, parameters: list[str]) -> dict[str, list[int]]:
     instruments and their replacements, kept as separate entries. Keeping only
     one id per name would silently pick whichever appeared last in the list -
     which is exactly how a sensor that died in 2019 can shadow a live one.
+    Matching is by name; numeric parameter ids differ across API versions and
+    even within one location payload.
     """
-    wanted = {PARAMETER_IDS[p] for p in parameters if p in PARAMETER_IDS}
+    wanted = {p for p in parameters if p in PARAMETER_NAMES}
     out: dict[str, list[int]] = {}
     for sensor in location.get("sensors", []) or []:
-        pid = (sensor.get("parameter") or {}).get("id")
-        name = (sensor.get("parameter") or {}).get("name")
-        if pid in wanted and name:
+        parameter = sensor.get("parameter") or {}
+        name = parameter.get("name")
+        if name in wanted:
             out.setdefault(name, []).append(sensor.get("id"))
     return out
 
@@ -235,8 +248,13 @@ def fetch_sensor(session, sensor_id: int, start: datetime, end: datetime,
         parts.append(chunk_df)
         cursor = chunk_end
 
+    parts = [p for p in parts if len(p)]
     if not parts:
         return pd.DataFrame(columns=["time", "value"])
+    # Empty parts are dropped, not just because they carry nothing: they are
+    # read back with object columns, and pandas 3's concat lets an empty
+    # frame's dtype poison the whole column (float64 -> object), which then
+    # silently falls out of build_live's select_dtypes("number") collapse.
     return pd.concat(parts, ignore_index=True)
 
 
@@ -244,7 +262,7 @@ def fetch(cfg) -> pd.DataFrame:
     """Ground truth for every configured station."""
     session = _session()
     station_keys = cfg.get("data.stations")
-    parameters = ["pm25"] + [p for p in cfg.get("data.extra_pollutants", []) if p in PARAMETER_IDS]
+    parameters = ["pm25"] + [p for p in cfg.get("data.extra_pollutants", []) if p in PARAMETER_NAMES]
     start = pd.Timestamp(cfg.get("data.start")).to_pydatetime()
     end = pd.Timestamp(cfg.get("data.end")).to_pydatetime()
 
@@ -270,7 +288,14 @@ def fetch(cfg) -> pd.DataFrame:
             # coexist in the location payload.
             series = None
             for sensor_id in candidates:
-                candidate = fetch_sensor(session, sensor_id, start, end, cfg=cfg)
+                try:
+                    candidate = fetch_sensor(session, sensor_id, start, end, cfg=cfg)
+                except OpenAQError as exc:
+                    # A sensor whose endpoint consistently 500s should cost its
+                    # retries, not the whole build.
+                    log.warning("%s: %s sensor %s failed (%s) - trying next candidate",
+                                station.key, name, sensor_id, exc)
+                    continue
                 if not candidate["time"].dropna().empty:
                     series = candidate
                     log.info("%s: %s <- sensor %s", station.key, name, sensor_id)
@@ -312,6 +337,17 @@ def fetch(cfg) -> pd.DataFrame:
         )
 
     out = pd.concat(frames, ignore_index=True).sort_values(["station", "time"])
+    # The v3 CPCB feed reports quarter-hourly, but this pipeline is hourly.
+    # Floor to the hour here; build_live's groupby then collapses the sub-hour
+    # rows into their hourly mean. Without this, only the :00 rows match the
+    # hourly weather join and the rest lose their meteorology.
+    out["time"] = pd.to_datetime(out["time"], utc=True, errors="coerce").dt.floor("h")
+    out = out.dropna(subset=["time"])
+    # Pollutant columns must be numeric no matter what the feed did; an object
+    # column would silently drop out of build_live's select_dtypes collapse.
+    for col in out.columns:
+        if col not in ("time", "station", "station_name"):
+            out[col] = pd.to_numeric(out[col], errors="coerce")
     log.info("OpenAQ: %d rows across %d stations", len(out), out["station"].nunique())
     return out.reset_index(drop=True)
 

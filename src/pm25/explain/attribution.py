@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from ..config import Config
-from ..features import feature_columns
+from ..features import feature_columns, usable_feature_columns
 from ..utils import get_logger, read_json, read_table, write_json, write_table
 from . import importance, proxies
 
@@ -40,7 +40,7 @@ def run(cfg: Config, top_k: int = 5) -> dict:
     frame["time"] = pd.to_datetime(frame["time"], utc=True)
     model = joblib.load(model_path)
 
-    cols = feature_columns(frame)
+    cols = usable_feature_columns(frame, feature_columns(frame))
     X = frame[cols].astype(float)
     X = X.fillna(X.median())
     y = frame["y"].astype(float)

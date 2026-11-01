@@ -37,7 +37,13 @@ def build_live(cfg: Config) -> pd.DataFrame:
     ground["time"] = pd.to_datetime(ground["time"], utc=True)
     ground = ground.dropna(subset=["time"]).sort_values(["station", "time"])
 
-    # Collapse to exactly one row per station-hour.
+    # Collapse to exactly one row per station-hour. Coerce first: a single
+    # object-dtype column (a feed quirk, a pandas concat artefact) would
+    # otherwise silently fall out of select_dtypes and vanish here.
+    identity = {"time", "station", "station_name", "lat", "lon"}
+    for col in ground.columns:
+        if col not in identity:
+            ground[col] = pd.to_numeric(ground[col], errors="coerce")
     numeric = ground.select_dtypes("number").columns.tolist()
     ground = (
         ground.groupby(["station", "station_name", "lat", "lon", "time"], as_index=False)[numeric]
@@ -73,7 +79,7 @@ def build_live(cfg: Config) -> pd.DataFrame:
 
     # 5. road proximity -----------------------------------------------------
     try:
-        distances = roads.fetch(cfg)
+        distances = roads.fetch(cfg, stations=df["station"].unique().tolist())
         df["dist_road_km"] = df["station"].map(distances)
     except Exception as exc:
         log.warning("road step skipped: %s", exc)

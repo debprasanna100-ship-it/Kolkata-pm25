@@ -87,6 +87,17 @@ def test_get_gives_up_with_actionable_message():
         openaq._get(session, "http://x", {}, retries=3)
 
 
+def test_get_retries_5xx_then_succeeds():
+    session = _FakeSession([
+        _FakeResponse(500),
+        _FakeResponse(503),
+        _FakeResponse(200, _measurement_payload()),
+    ])
+    payload = openaq._get(session, "http://x", {})
+    assert len(payload["results"]) == 3
+    assert len(session.calls) == 3
+
+
 def test_get_raises_immediately_on_auth_error():
     session = _FakeSession([_FakeResponse(401)])
     with pytest.raises(openaq.OpenAQError, match="401"):
@@ -160,6 +171,52 @@ def test_sensor_ids_keeps_all_candidates():
     }
     out = openaq._sensor_ids(location, ["pm25", "pm10"])
     assert out == {"pm25": [19997, 12235887], "pm10": [19994]}
+
+
+def test_fetch_sensor_empty_gap_does_not_poison_dtypes(cfg, monkeypatch):
+    """An empty gap month (in memory or read back header-only from cache) has
+    object columns, and pandas 3 lets an empty frame's dtype win in concat.
+    The result must stay float64 or build_live's select_dtypes collapse
+    silently drops the pollutant."""
+    start = datetime(2025, 3, 1, tzinfo=timezone.utc)
+    end = datetime(2025, 6, 1, tzinfo=timezone.utc)   # chunks: Mar, Mar31-Apr30, Apr30-May30, May30-Jun1
+
+    # Data in the first chunk, an empty month, then data again.
+    def fake_get(session, url, params, retries=8):
+        frm = params["datetime_from"]
+        has_data = frm == "2025-03-01T00:00:00Z" or frm >= "2025-04-30T00:00:00Z"
+        return _measurement_payload() if has_data else {"results": []}
+
+    monkeypatch.setattr(openaq, "_get", fake_get)
+    out = openaq.fetch_sensor(None, 5, start, end, cfg=cfg)
+    assert len(out) == 9   # 3 rows x 3 data chunks; the gap month is empty
+    assert out["value"].dtype.kind == "f", out["value"].dtype
+
+
+def test_fetch_floors_quarter_hourly_to_hour(cfg, monkeypatch):
+    """The v3 CPCB feed reports every 15 minutes; the pipeline is hourly.
+    fetch() floors to the hour so build_live's groupby can take the hourly
+    mean and the weather join matches."""
+    monkeypatch.setenv("OPENAQ_API_KEY", "test")
+    monkeypatch.setattr(openaq, "_session", lambda: object())
+    monkeypatch.setattr(
+        openaq, "find_locations",
+        lambda session, station: [{"id": 1, "name": "x", "sensors": []}],
+    )
+    monkeypatch.setattr(openaq, "_sensor_ids", lambda loc, params: {"pm25": [11]})
+    times = pd.to_datetime(
+        ["2025-03-01 10:00", "2025-03-01 10:15", "2025-03-01 10:30", "2025-03-01 10:45"],
+        utc=True,
+    )
+    frame = pd.DataFrame({"time": times.astype(str), "value": [10.0, 20.0, 30.0, 40.0]})
+    monkeypatch.setattr(openaq, "fetch_sensor", lambda *a, **k: frame.copy())
+
+    out = openaq.fetch(cfg)
+    assert (out["time"].dt.minute == 0).all()
+    # build_live collapses the four sub-hour rows into their hourly mean.
+    hourly = out.groupby("time", as_index=False)["pm25"].mean()
+    assert len(hourly) == 1
+    assert hourly["pm25"].iloc[0] == 25.0
 
 
 def test_fetch_sensor_caches_empty_months_only_after_data(cfg, monkeypatch):

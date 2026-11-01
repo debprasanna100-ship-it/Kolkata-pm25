@@ -39,11 +39,14 @@ def nearest_major_road_km(lat: float, lon: float, radius_m: int = 5000) -> float
     way(around:{radius_m},{lat},{lon})["highway"~"^({HIGHWAY_FILTER})$"];
     out geom;
     """
-    for attempt in range(3):
+    # Short timeouts on purpose: this is a nice-to-have feature with a
+    # documented fallback table. A dead Overpass should cost a minute, not
+    # twenty, before the build moves on.
+    for attempt in range(2):
         try:
-            response = requests.post(OVERPASS, data={"data": query}, timeout=120)
+            response = requests.post(OVERPASS, data={"data": query}, timeout=30)
             if response.status_code != 200:
-                time.sleep(3 * (attempt + 1))
+                time.sleep(2 * (attempt + 1))
                 continue
 
             elements = response.json().get("elements", [])
@@ -56,13 +59,19 @@ def nearest_major_road_km(lat: float, lon: float, radius_m: int = 5000) -> float
             return best
         except Exception as exc:
             log.warning("Overpass attempt %d failed: %s", attempt + 1, exc)
-            time.sleep(3 * (attempt + 1))
+            time.sleep(2 * (attempt + 1))
     return None
 
 
-def fetch(cfg) -> dict[str, float]:
+def fetch(cfg, stations: list[str] | None = None) -> dict[str, float]:
+    """Nearest-major-road distance per station.
+
+    `stations` limits the lookups to stations actually present in the dataset;
+    querying a dead station's road context wastes a request and its retries.
+    """
+    keys = list(stations) if stations else cfg.get("data.stations")
     result: dict[str, float] = {}
-    for station in get_stations(cfg.get("data.stations")):
+    for station in get_stations(keys):
         distance = nearest_major_road_km(station.lat, station.lon)
         if distance is None:
             distance = FALLBACK_ROAD_KM.get(station.key, 0.8)

@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from ..config import Config
-from ..features import feature_columns, make_features
+from ..features import feature_columns, make_features, usable_feature_columns
 from ..utils import ensure_dir, get_logger, read_table, write_json, write_table
 from . import deep, evaluate
 from .baselines import Climatology, LinearBaseline, Persistence
@@ -81,7 +81,7 @@ def run(
         log.info("HORIZON +%dh", horizon)
 
         feat = make_features(df, cfg, horizon=horizon)
-        cols = feature_columns(feat)
+        cols = usable_feature_columns(feat, feature_columns(feat))
         train_df, test_df = evaluate.time_split(feat, test_year)
 
         X_tr, y_tr, medians = _xy(train_df, cols)
@@ -177,7 +177,7 @@ def run(
             # drivers we report are meteorology and emissions, not persistence.
             log.info("training attribution model (no lag features)")
             attrib_feat = make_features(df, cfg, horizon=0, include_lags=False)
-            acols = feature_columns(attrib_feat)
+            acols = usable_feature_columns(attrib_feat, feature_columns(attrib_feat))
             a_tr, b_tr = evaluate.time_split(attrib_feat, test_year)
             Xa, ya, meda = _xy(a_tr, acols)
             attrib_model = train_gbdt(Xa, ya, cfg, quantiles=[0.5], features=acols)

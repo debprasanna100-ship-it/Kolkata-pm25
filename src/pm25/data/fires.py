@@ -32,6 +32,10 @@ def fetch(cfg) -> pd.DataFrame:
     """Daily fire detections inside the configured bbox.
 
     Returns columns: date, fire_count, fire_lat, fire_lon (cluster centroid).
+
+    Each 5-day chunk is cached under data/raw/firms_cache/ - the walk from
+    `data.start` to `data.end` is ~120 requests, and rerunning the build
+    should not re-pay them.
     """
     key = os.environ.get("FIRMS_MAP_KEY", "").strip()
     if not key:
@@ -43,23 +47,35 @@ def fetch(cfg) -> pd.DataFrame:
     west, south, east, north = cfg.get("fires.bbox", [85.0, 20.5, 92.0, 25.5])
     start = pd.Timestamp(cfg.get("data.start"))
     end = pd.Timestamp(cfg.get("data.end"))
+    cache_dir = ensure_dir(cfg.path("raw") / "firms_cache")
 
     frames = []
     cursor = start
     while cursor < end:
         span = min(5, (end - cursor).days + 1)          # area API caps at 10 days
-        url = f"{AREA_API}/{key}/{source}/{west},{south},{east},{north}/{span}/{cursor.date()}"
-        response = requests.get(url, timeout=120)
+        cache_file = cache_dir / f"{source}_{cursor:%Y%m%d}.csv"
 
-        if response.status_code == 200 and response.text.strip():
-            try:
-                chunk = pd.read_csv(io.StringIO(response.text))
-                if "latitude" in chunk:
-                    frames.append(chunk)
-            except Exception as exc:
-                log.warning("could not parse FIRMS chunk %s: %s", cursor.date(), exc)
+        if cache_file.exists():
+            chunk = pd.read_csv(cache_file)
+            if not chunk.empty:
+                frames.append(chunk)
         else:
-            log.warning("FIRMS %s -> HTTP %s", cursor.date(), response.status_code)
+            url = f"{AREA_API}/{key}/{source}/{west},{south},{east},{north}/{span}/{cursor.date()}"
+            response = requests.get(url, timeout=120)
+
+            if response.status_code == 200 and response.text.strip():
+                try:
+                    chunk = pd.read_csv(io.StringIO(response.text))
+                    # Cache the raw response verbatim - including "no data"
+                    # days - so a rerun never re-requests a span.
+                    cache_file.write_text(response.text, encoding="utf-8")
+                    if "latitude" in chunk:
+                        frames.append(chunk)
+                except Exception as exc:
+                    log.warning("could not parse FIRMS chunk %s: %s", cursor.date(), exc)
+            else:
+                log.warning("FIRMS %s -> HTTP %s (chunk left uncached)", cursor.date(),
+                            response.status_code)
 
         cursor += pd.Timedelta(days=span)
         time.sleep(1.0)

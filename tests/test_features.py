@@ -143,3 +143,18 @@ def test_no_copollutants_or_identity_in_features(cfg):
 def test_include_lags_false_strips_every_autoregressive_column(cfg):
     cols = feature_columns(make_features(_frame(), cfg, horizon=0, include_lags=False))
     assert not any(c.startswith(("pm25_lag", "pm25_roll", "pm25_diff")) for c in cols)
+
+
+def test_usable_columns_drop_all_nan_features(cfg):
+    """Live mode with the satellite step skipped leaves aod columns all-NaN;
+    their median is NaN, imputation is a no-op, and ridge crashes on them."""
+    from pm25.features import usable_feature_columns
+
+    feat = make_features(_frame(), cfg, horizon=24)
+    feat["aod_lag24"] = np.nan          # simulate satellite step skipped
+    feat["ventilation"] = np.nan
+    cols = feature_columns(feat)
+    usable = usable_feature_columns(feat, cols)
+    assert "aod_lag24" not in usable and "ventilation" not in usable
+    assert "temp" in usable             # healthy columns untouched
+    assert len(usable) == len(cols) - 2

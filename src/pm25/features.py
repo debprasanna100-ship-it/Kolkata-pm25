@@ -166,6 +166,22 @@ def feature_columns(df: pd.DataFrame) -> list[str]:
     return cols
 
 
+def usable_feature_columns(df: pd.DataFrame, cols: list[str]) -> list[str]:
+    """Feature columns that carry information in THIS frame.
+
+    A column that is NaN everywhere (live mode with the satellite step skipped
+    leaves aod/aod_lag24 all-NaN) has a NaN median, so median imputation is a
+    no-op and the column poisons every estimator that rejects NaN - ridge
+    crashes outright, and the others carry dead weight. Drop them once, here,
+    so train/test/LOSO all see the same columns.
+    """
+    keep = [c for c in cols if not df[c].isna().all()]
+    dropped = [c for c in cols if c not in keep]
+    if dropped:
+        log.info("dropping all-NaN feature columns: %s", dropped)
+    return keep
+
+
 def group_of(feature: str) -> str:
     for name, members in FEATURE_GROUPS.items():
         if feature in members:
