@@ -1,0 +1,34 @@
+# ---------------------------------------------------------------------------
+# Core - everything needed to run the full pipeline in demo mode and the
+# dashboard. Deliberately small: no compiled extras, installs in ~1 minute.
+# ---------------------------------------------------------------------------
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3
+pyyaml>=6.0
+streamlit>=1.30
+plotly>=5.18
+joblib>=1.3
+requests>=2.31
+
+# ---------------------------------------------------------------------------
+# Dev - needed to run the test suite (make test)
+# ---------------------------------------------------------------------------
+pytest>=7.0
+
+# ---------------------------------------------------------------------------
+# Optional - live data collection. Uncomment the ones you need.
+# Each adapter degrades gracefully if its package is missing.
+# ---------------------------------------------------------------------------
+# earthengine-api>=0.1.380     # satellite: MODIS/VIIRS AOD, TROPOMI NO2/CO/SO2
+# cdsapi>=0.6.1                # ERA5 reanalysis (boundary layer height)
+# openmeteo-requests>=1.2.0    # alternative free weather API (no key)
+# geopandas>=0.14              # OSM road distances
+# shapely>=2.0
+
+# ---------------------------------------------------------------------------
+# Optional - modelling upgrades
+# ---------------------------------------------------------------------------
+# lightgbm>=4.0                # faster GBDT + native quantile loss
+# shap>=0.44                   # exact tree attributions (falls back to permutation)
+# torch>=2.2                   # LSTM / CNN-LSTM (falls back to gradient boosting)

@@ -1,0 +1,20 @@
+# generated data and models - reproduce with `python -m pm25.cli all`
+data/raw/
+data/processed/
+artifacts/
+
+# secrets
+.env
+config.yaml
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/

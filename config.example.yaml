@@ -1,0 +1,77 @@
+# ===========================================================================
+# Kolkata PM2.5 - project configuration
+# Copy to config.yaml and edit. Everything has a sane default, so an empty
+# config.yaml also works.
+# ===========================================================================
+
+project:
+  name: kolkata-pm25
+  seed: 42
+
+data:
+  # demo  -> deterministic synthetic dataset, no network, no keys.
+  #         Use this to develop and to demo the pipeline.
+  # live  -> pulls real data from the adapters (needs the keys in .env).
+  mode: demo
+
+  start: "2023-01-01"
+  end: "2024-12-31"
+
+  target: pm25
+
+  # Keys from src/pm25/stations.py
+  stations:
+    - victoria_memorial
+    - jadavpur
+    - rabindra_bharati
+    - ballygunge
+
+  # Which extra pollutants to keep if the source provides them.
+  extra_pollutants: [pm10, no2, so2, co, o3]
+
+weather:
+  # openmeteo -> free, no key, hourly, good coverage
+  # era5      -> needs a CDS key, adds boundary_layer_height (recommended)
+  provider: openmeteo
+
+satellite:
+  # gee  -> Google Earth Engine (needs `earthengine authenticate`)
+  # none -> skip satellite features
+  provider: gee
+  aod_collection: "MODIS/061/MCD19A2_GRANULES"   # MAIAC 1 km daily
+  aod_band: "Optical_Depth_047"
+  no2_collection: "COPERNICUS/S5P/OFFL/L3_NO2"
+  no2_band: "tropospheric_NO2_column_number_density"
+  # Radius in metres for the AOD buffer around each station.
+  buffer_m: 5000
+
+fires:
+  # NASA FIRMS. Free MAP_KEY from https://firms.modaps.eosdis.nasa.gov/api/
+  source: "VIIRS_SNPP_NRT"
+  # Bounding box around Kolkata used to collect fires, then rotated upwind.
+  bbox: [85.0, 20.5, 92.0, 25.5]
+  upwind_radius_deg: 3.0
+
+features:
+  lags: [0, 1, 3, 6, 12, 24]
+  rolling_windows: [6, 24]
+  # Drop satellite columns for forecast horizons where they would leak the future.
+  aod_available_ahead_h: 2
+
+models:
+  # Forecast horizons in hours. 0 = nowcast.
+  horizons: [1, 6, 24]
+  test_year: 2024
+  # Quantiles for the prediction interval.
+  quantiles: [0.1, 0.5, 0.9]
+  gbdt:
+    n_estimators: 400
+    learning_rate: 0.05
+    max_depth: 6
+    min_samples_leaf: 20
+
+paths:
+  raw: data/raw
+  processed: data/processed
+  artifacts: artifacts
+  figures: artifacts/figures
