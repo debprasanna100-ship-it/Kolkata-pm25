@@ -202,12 +202,25 @@ cp .env.example .env
 python -m pm25.cli build --mode live --start 2023-01-01 --end 2024-12-31
 ```
 
-**OpenAQ rate limits (free tier): 60 requests/min, 2,000/hour.** A 2-year build for
-4 stations is ~600 measurement requests; the client throttles itself below the minute
-cap (so a clean run takes ~10 minutes) and backs off using `x-ratelimit-reset` when
-the hour cap bites. Every fetched 30-day chunk is cached under `data/raw/openaq_cache/`
-— if a run dies or gives up, just rerun the same command and it resumes from disk
-instead of re-paying the quota. If you see "resets in ~N min", wait and rerun.
+**OpenAQ rate limits (free tier): 60 requests/min, 2,000/hour.** The client throttles
+itself below the minute cap (a ~20-month build takes ~10 minutes) and backs off using
+`x-ratelimit-reset` when the hour cap bites. Every fetched 30-day chunk is cached under
+`data/raw/openaq_cache/` — if a run dies or gives up, just rerun the same command and
+it resumes from disk instead of re-paying the quota.
+
+**Live coverage reality (verified 2026-11):** CPCB/WBPCB stations on OpenAQ often carry
+*several* sensors per pollutant — retired instruments and their replacements. The old
+Kolkata sensors stopped reporting years ago and the replacement generation started
+**~2025-02-18** (Jadavpur, Ballygunge); Rabindra Bharati's PM2.5 has no recent data at
+all. Requesting 2023–2024 therefore returns nothing. The client now tries every sensor
+listed for a pollutant and skips dead ones, but you must pick a window the data exists
+in:
+
+```bash
+python -m pm25.cli build --mode live --start 2025-03-01 --end 2026-10-31
+python -m pm25.cli train --test-year 2026      # train 2025, test 2026
+python -m pm25.cli explain
+```
 
 | Source | Provides | Cost |
 |---|---|---|

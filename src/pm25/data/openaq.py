@@ -135,14 +135,21 @@ def find_locations(session, station: Station, radius_m: int = 25000) -> list[dic
     return matched or results[:3]
 
 
-def _sensor_ids(location: dict, parameters: list[str]) -> dict[str, int]:
+def _sensor_ids(location: dict, parameters: list[str]) -> dict[str, list[int]]:
+    """All sensor ids per parameter name.
+
+    Locations usually carry several sensors for the same pollutant: retired
+    instruments and their replacements, kept as separate entries. Keeping only
+    one id per name would silently pick whichever appeared last in the list -
+    which is exactly how a sensor that died in 2019 can shadow a live one.
+    """
     wanted = {PARAMETER_IDS[p] for p in parameters if p in PARAMETER_IDS}
-    out = {}
+    out: dict[str, list[int]] = {}
     for sensor in location.get("sensors", []) or []:
         pid = (sensor.get("parameter") or {}).get("id")
         name = (sensor.get("parameter") or {}).get("name")
         if pid in wanted and name:
-            out[name] = sensor.get("id")
+            out.setdefault(name, []).append(sensor.get("id"))
     return out
 
 
@@ -155,6 +162,13 @@ def fetch_sensor(session, sensor_id: int, start: datetime, end: datetime,
     attempt instead of re-paying the API quota - with the free tier's
     2,000 requests/hour cap, that is the difference between finishing and
     never finishing.
+
+    Two guards against the instrument-replacement reality of CPCB feeds:
+      * a sensor with nothing in the first six months of the requested range
+        almost certainly starts later - stop early instead of burning a
+        request on every remaining month;
+      * empty chunks are cached only once the sensor has produced data, so a
+        dead sensor can never poison the cache with header-only files.
     """
     cache_dir = None
     if cfg is not None:
@@ -162,6 +176,8 @@ def fetch_sensor(session, sensor_id: int, start: datetime, end: datetime,
 
     parts: list[pd.DataFrame] = []
     cursor = start
+    has_data = False
+    empty_leading = 0
     while cursor < end:
         chunk_end = min(cursor + timedelta(days=30), end)
         cache_file = None
@@ -197,12 +213,24 @@ def fetch_sensor(session, sensor_id: int, start: datetime, end: datetime,
                 if page > 60:
                     break
             chunk_df = pd.DataFrame(rows, columns=["time", "value"])
-            if cache_file is not None:
-                # Empty months are cached too: "no data here" is an answer we
-                # should not pay for twice. Explicit columns keep the cached
-                # file readable (a headerless empty CSV would fail pd.read_csv
-                # on resume).
+            # Cache empties only after we have seen data from this sensor:
+            # "no data anywhere in range" must stay cache-free, because the
+            # sensor may simply start later than the requested window.
+            if cache_file is not None and (has_data or not chunk_df.empty):
                 chunk_df.to_csv(cache_file, index=False)
+
+        if chunk_df["time"].notna().any():
+            has_data = True
+            empty_leading = 0
+        elif not has_data:
+            empty_leading += 1
+            if empty_leading >= 6:
+                log.warning(
+                    "sensor %s: no data in the first six months of %s..%s - "
+                    "it probably starts later; skipping the remaining months",
+                    sensor_id, start.date(), end.date(),
+                )
+                break
 
         parts.append(chunk_df)
         cursor = chunk_end
@@ -236,9 +264,23 @@ def fetch(cfg) -> pd.DataFrame:
             continue
 
         merged: pd.DataFrame | None = None
-        for name, sensor_id in sensors.items():
-            series = fetch_sensor(session, sensor_id, start, end, cfg=cfg)
-            if series.empty:
+        for name, candidates in sensors.items():
+            # Try every sensor listed for this pollutant until one has data in
+            # the requested window - retired instruments and their replacements
+            # coexist in the location payload.
+            series = None
+            for sensor_id in candidates:
+                candidate = fetch_sensor(session, sensor_id, start, end, cfg=cfg)
+                if not candidate["time"].dropna().empty:
+                    series = candidate
+                    log.info("%s: %s <- sensor %s", station.key, name, sensor_id)
+                    break
+            if series is None:
+                log.warning(
+                    "%s: no %s data from any of %d sensor(s) in %s..%s - "
+                    "the instrument may not report in this window",
+                    station.key, name, len(candidates), start.date(), end.date(),
+                )
                 continue
             series["time"] = pd.to_datetime(series["time"], utc=True, errors="coerce")
             series = series.dropna(subset=["time"])
@@ -247,7 +289,8 @@ def fetch(cfg) -> pd.DataFrame:
             series = series.rename(columns={"value": name})
             merged = series if merged is None else merged.merge(series, on="time", how="outer")
 
-        if merged is None:
+        if merged is None or "pm25" not in merged:
+            log.warning("%s: no usable PM2.5 in this window - skipping station", station.key)
             continue
 
         merged["station"] = station.key
@@ -258,7 +301,15 @@ def fetch(cfg) -> pd.DataFrame:
         time.sleep(1.0)
 
     if not frames:
-        raise OpenAQError("No station data retrieved. Check the station keys and the API key.")
+        raise OpenAQError(
+            "No station data retrieved for "
+            f"{start.date()}..{end.date()}. Likely causes: (1) the requested window "
+            "predates the stations' reporting - most Kolkata WBPCB sites' old sensors "
+            "stopped years ago and replacements started ~2025-02-18, so try "
+            "--start 2025-03-01 --end 2026-10-31; (2) a wrong API key; (3) an "
+            "exhausted rate-limit window (wait a few minutes - fetched chunks are "
+            "cached and the run resumes)."
+        )
 
     out = pd.concat(frames, ignore_index=True).sort_values(["station", "time"])
     log.info("OpenAQ: %d rows across %d stations", len(out), out["station"].nunique())

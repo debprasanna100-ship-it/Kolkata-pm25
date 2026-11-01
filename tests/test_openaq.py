@@ -147,15 +147,75 @@ def test_fetch_sensor_caches_chunks_and_resumes(cfg, monkeypatch):
     pd.testing.assert_frame_equal(first, second)
 
 
-def test_fetch_sensor_caches_empty_months(cfg, monkeypatch):
-    """A month with no data is an answer, not an error - cache it so we never
-    pay for it twice."""
-    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    end = datetime(2024, 1, 31, tzinfo=timezone.utc)   # exactly one 30-day chunk
+def test_sensor_ids_keeps_all_candidates():
+    """Retired and replacement sensors coexist per pollutant; dropping any
+    would silently lose data."""
+    location = {
+        "sensors": [
+            {"id": 19997, "parameter": {"id": 2, "name": "pm25"}},
+            {"id": 12235887, "parameter": {"id": 2, "name": "pm25"}},
+            {"id": 19994, "parameter": {"id": 1, "name": "pm10"}},
+            {"id": 99, "parameter": {"id": 55, "name": "nox"}},   # not wanted
+        ]
+    }
+    out = openaq._sensor_ids(location, ["pm25", "pm10"])
+    assert out == {"pm25": [19997, 12235887], "pm10": [19994]}
 
-    monkeypatch.setattr(openaq, "_get", lambda *a, **k: {"results": []})
-    empty = openaq.fetch_sensor(None, 7, start, end, cfg=cfg)
-    assert empty.empty
+
+def test_fetch_sensor_caches_empty_months_only_after_data(cfg, monkeypatch):
+    """Gaps *inside* a sensor's reporting period are cached; months before the
+    sensor starts reporting are not (the sensor may simply begin later)."""
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2024, 4, 1, tzinfo=timezone.utc)   # three chunks: Jan, Feb, Mar
+
+    def fake_get(session, url, params, retries=8):
+        # Data exists in February; chunks are 30-day windows, so a chunk
+        # overlaps February when it starts before Mar 1 and ends after Feb 1.
+        overlaps_feb = (
+            params["datetime_from"] < "2024-03-01" and params["datetime_to"] > "2024-02-01"
+        )
+        return _measurement_payload() if overlaps_feb else {"results": []}
+
+    monkeypatch.setattr(openaq, "_get", fake_get)
+    out = openaq.fetch_sensor(None, 7, start, end, cfg=cfg)
+    assert len(out) == 3   # only February has rows
 
     cache_dir = cfg.path("raw") / "openaq_cache"
-    assert len(list(cache_dir.glob("7_*.csv"))) == 1
+    cached = sorted(f.name for f in cache_dir.glob("7_*.csv"))
+    # Four 30-day chunks from Jan 1 to Apr 1; Feb's data turns has_data on,
+    # so the three chunks from that point on are cached, January never is.
+    assert len(cached) == 3
+    assert not any("_20240101_" in name for name in cached)   # January not poisoned
+
+    # Resume: Jan re-requested (1 call), Feb+Mar from cache.
+    calls = {"n": 0}
+
+    def counting_get(session, url, params, retries=8):
+        calls["n"] += 1
+        return fake_get(session, url, params, retries)
+
+    monkeypatch.setattr(openaq, "_get", counting_get)
+    openaq.fetch_sensor(None, 7, start, end, cfg=cfg)
+    assert calls["n"] == 1
+
+
+def test_fetch_sensor_gives_up_on_dead_sensor_after_six_empty_months(cfg, monkeypatch):
+    """A sensor with nothing in the first six months of the range probably
+    starts later - stop early instead of a request per remaining month."""
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2024, 9, 1, tzinfo=timezone.utc)   # eight chunks
+
+    calls = {"n": 0}
+
+    def fake_get(session, url, params, retries=8):
+        calls["n"] += 1
+        return {"results": []}
+
+    monkeypatch.setattr(openaq, "_get", fake_get)
+    out = openaq.fetch_sensor(None, 9, start, end, cfg=cfg)
+    assert out.empty
+    assert calls["n"] == 6   # early exit, not 8
+
+    # And a dead sensor leaves no cache files to poison later runs.
+    cache_dir = cfg.path("raw") / "openaq_cache"
+    assert not list(cache_dir.glob("9_*.csv"))
