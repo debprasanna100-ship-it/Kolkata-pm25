@@ -78,59 +78,69 @@ Real output from `python -m pm25.cli all` on the synthetic dataset. **These are 
 checks, not findings** — but the *shape* is what you should expect from real data, and it
 is the shape your report has to explain.
 
-Time split: train 2023, test 2024. n ≈ 33,400 test hours per horizon. Episode
-recall is computed on the winter slice (Nov–Feb), where the threshold crossings
-actually cluster.
+Time split: train 2025 (Mar–Dec), test 2026 (Jan–Oct) — the verified live coverage
+window, also the demo default. n ≈ 27,800 test hours per horizon. Episode recall is
+computed on the winter slice (Nov–Feb), where the threshold crossings actually cluster.
 
 | Horizon | Model | RMSE | MAE | R² | Episode recall | PI80 |
 |---|---|---|---|---|---|---|
-| **+1 h** | persistence | 15.88 | 11.30 | 0.864 | 0.75 | — |
-| | climatology | 21.53 | 15.38 | 0.751 | 0.54 | — |
-| | ridge | 14.76 | 10.50 | 0.883 | 0.75 | — |
-| | **GBDT** | **13.67** | **9.45** | **0.899** | 0.77 | 0.744 |
-| **+6 h** | persistence | 31.66 | 23.49 | 0.461 | 0.50 | — |
-| | **GBDT** | **19.50** | **13.53** | **0.795** | 0.61 | 0.735 |
-| **+24 h** | persistence | 27.64 | 19.34 | 0.589 | 0.56 | — |
-| | **GBDT** | **20.99** | **14.62** | **0.763** | 0.50 | 0.728 |
+| **+1 h** | persistence | 14.53 | 10.24 | 0.871 | 0.76 | — |
+| | climatology | 29.92 | 19.34 | 0.452 | 0.00 | — |
+| | ridge | 13.54 | 9.53 | 0.888 | 0.79 | — |
+| | **GBDT** | **12.50** | **8.62** | **0.904** | 0.77 | 0.737 |
+| **+6 h** | persistence | 29.46 | 21.77 | 0.468 | 0.49 | — |
+| | **GBDT** | **18.07** | **12.34** | **0.800** | 0.44 | 0.736 |
+| **+24 h** | persistence | 24.50 | 16.98 | 0.632 | 0.54 | — |
+| | ridge | 19.28 | 13.62 | 0.772 | 0.51 | — |
+| | **GBDT** | **19.47** | **13.27** | **0.768** | 0.32 | 0.729 |
 
-Three things worth reading off this table:
+Four things worth reading off this table:
 
-1. **Persistence collapses from R² 0.86 to 0.46 by +6 h.** That is the honest reason a
-   model exists at all. At +1 h it is a serious competitor; by +24 h it is worse than
-   climatology.
+1. **Persistence collapses from R² 0.87 to 0.47 by +6 h.** That is the honest reason a
+   model exists at all. At +1 h it is a serious competitor.
 2. **PI80 coverage is 0.73–0.74 against a nominal 0.80.** The intervals are slightly
    overconfident. Reporting that instead of hiding it is the point.
-3. **Episode recall falls with lead time** (0.77 → 0.61 → 0.50) while overall R² falls much
-   less. A model can look fine on RMSE and still miss half the smog days.
+3. **Episode recall falls with lead time** (0.77 → 0.44 → 0.32) while overall R² falls
+   much less — and by +24 h persistence actually catches *more* episodes (0.54) than the
+   GBDT (0.32). A model can look fine on RMSE and still lose the smog days; that trade
+   is the thing to report, not hide.
+4. **Climatology is terrible here (R² ≈ 0.45) because the window starts in March.**
+   Train-2025 never sees January or February, so its station × month × hour table has no
+   winter entries and falls back to the global mean exactly when it matters. The GBDT
+   interpolates through `month_sin/cos` and does not care. Any window that does not
+   start on 1 January has this artifact — check for it before quoting climatology.
 
 ### Leave-one-station-out
 
 | Horizon | Mean LOSO R² | Mean LOSO RMSE |
 |---|---|---|
-| +1 h | 0.900 | 13.28 |
-| +6 h | 0.792 | 19.13 |
-| +24 h | 0.751 | 20.95 |
+| +1 h | 0.903 | 12.35 |
+| +6 h | 0.798 | 17.83 |
+| +24 h | 0.763 | 19.34 |
 
-Per-station spread is small in the demo (0.744–0.901) **because the synthetic stations share
+Per-station spread is small in the demo (0.756–0.906) **because the synthetic stations share
 one generating function**. On live data expect LOSO to drop meaningfully below the time-split
 number — that gap *is* the spatial-generalisation story, and it is the number to quote.
 
 ### Attribution
 
-Top model drivers: `month_cos`, `aod`, `ventilation`, `pbl`, `hour_sin`, `fire_upwind`.
+Top model drivers: `month_cos`, `aod`, `fire_upwind`, `ventilation`, `hour_sin`, `pbl_inv`.
 
-11 of 20 season × proxy pairs are supported by the model's own importances, including:
+9 of 20 season × proxy pairs are supported by the model's own importances:
 
 | Season | Proxy | Share of hours | Supported by model |
 |---|---|---|---|
-| post-monsoon | biomass | 46% | ✅ `fire_upwind` in top-5 |
-| winter | dust | 35% | ✅ `wind_speed`, `pbl` |
-| winter | traffic | 19% | ✅ `hour_sin`, `hour_cos` |
-| pre-monsoon | dust | 14% | ✅ `ventilation` |
-| monsoon | background | 73% | ✅ `ventilation` |
+| post-monsoon | biomass | 48% | ✅ `fire_upwind` in top-5 |
+| post-monsoon | background | 34% | ✅ `pbl` |
+| pre-monsoon | dust | 15% | ✅ `ventilation` |
+| pre-monsoon | traffic | 21% | ✅ `hour_sin` |
+| monsoon | background | 72% | ✅ `ventilation` |
+| winter | traffic | 28% | ✅ `hour_sin`, `hour_cos` |
 
-The unsupported pairs matter as much as the supported ones — `secondary` never fires in this
-dataset, and the model correctly does not pretend otherwise.
+The unsupported pairs matter as much as the supported ones — `secondary` essentially never
+fires in this dataset (≤5% of hours everywhere), and winter dust (20% of hours) finds none of
+its expected drivers in the model's winter top-5, which leans on humidity and ventilation
+instead. The model does not pretend otherwise, and neither should the report.
 
 ---
 
@@ -212,13 +222,13 @@ it resumes from disk instead of re-paying the quota.
 *several* sensors per pollutant — retired instruments and their replacements. The old
 Kolkata sensors stopped reporting years ago and the replacement generation started
 **~2025-02-18** (Jadavpur, Ballygunge); Rabindra Bharati's PM2.5 has no recent data at
-all. Requesting 2023–2024 therefore returns nothing. The client now tries every sensor
-listed for a pollutant and skips dead ones, but you must pick a window the data exists
-in:
+all. Requesting 2023–2024 therefore returns nothing — the client tries every sensor
+listed for a pollutant and skips dead ones, and the config defaults already use the
+verified window, so the bare commands work:
 
 ```bash
-python -m pm25.cli build --mode live --start 2025-03-01 --end 2026-10-31
-python -m pm25.cli train --test-year 2026      # train 2025, test 2026
+python -m pm25.cli build --mode live    # 2025-03-01 .. 2026-10-31 (default)
+python -m pm25.cli train                # test_year 2026 (default)
 python -m pm25.cli explain
 ```
 
