@@ -199,7 +199,7 @@ cp config.example.yaml config.yaml
 cp .env.example .env
 # fill OPENAQ_API_KEY, GEE_PROJECT, FIRMS_MAP_KEY (all free)
 # optionally: earthengine authenticate ; ~/.cdsapirc for ERA5
-python -m pm25.cli build --mode live --start 2023-01-01 --end 2024-12-31
+python -m pm25.cli build --mode live
 ```
 
 **OpenAQ rate limits (free tier): 60 requests/min, 2,000/hour.** The client throttles

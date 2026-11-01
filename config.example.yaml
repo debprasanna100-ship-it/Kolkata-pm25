@@ -14,8 +14,10 @@ data:
   # live  -> pulls real data from the adapters (needs the keys in .env).
   mode: demo
 
-  start: "2023-01-01"
-  end: "2024-12-31"
+  # Verified 2026-11: Kolkata WBPCB replacement sensors started ~2025-02-18.
+  # Earlier windows return nothing from OpenAQ v3.
+  start: "2025-03-01"
+  end: "2026-10-31"
 
   target: pm25
 
@@ -61,7 +63,7 @@ features:
 models:
   # Forecast horizons in hours. 0 = nowcast.
   horizons: [1, 6, 24]
-  test_year: 2024
+  test_year: 2026
   # Quantiles for the prediction interval.
   quantiles: [0.1, 0.5, 0.9]
   gbdt:

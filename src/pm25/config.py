@@ -19,8 +19,10 @@ DEFAULTS: dict[str, Any] = {
     "project": {"name": "kolkata-pm25", "seed": 42},
     "data": {
         "mode": "demo",
-        "start": "2023-01-01",
-        "end": "2024-12-31",
+        # Verified 2026-11: Kolkata WBPCB replacement sensors started ~2025-02-18.
+        # Earlier windows return nothing from OpenAQ v3.
+        "start": "2025-03-01",
+        "end": "2026-10-31",
         "target": "pm25",
         "stations": ["victoria_memorial", "jadavpur", "rabindra_bharati", "ballygunge"],
         "extra_pollutants": ["pm10", "no2", "so2", "co", "o3"],
@@ -42,7 +44,7 @@ DEFAULTS: dict[str, Any] = {
     "features": {"lags": [0, 1, 3, 6, 12, 24], "rolling_windows": [6, 24], "aod_available_ahead_h": 2},
     "models": {
         "horizons": [1, 6, 24],
-        "test_year": 2024,
+        "test_year": 2026,
         "quantiles": [0.1, 0.5, 0.9],
         "gbdt": {"n_estimators": 400, "learning_rate": 0.05, "max_depth": 6, "min_samples_leaf": 20},
     },
