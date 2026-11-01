@@ -60,10 +60,21 @@ st.set_page_config(
     layout="wide",
 )
 
+st.set_page_config(
+    page_title="Kolkata PM2.5 — Estimation & Source Attribution",
+    page_icon="🌫️",
+    layout="wide",
+)
+
 st.title("🌫️ Hourly PM2.5 Estimation & Source Attribution — Kolkata")
 st.caption(
     "Satellite AOD + ERA5 meteorology + fire transport + ground stations. "
     "Model: quantile gradient boosting. Explanation: SHAP vs rule-based source proxies."
+)
+st.markdown(
+    "<small>Tip: plots are cached after first render. The live dataset is ~24K rows; "
+    "the Overview tab samples 4,000 rows for the scatter so the dashboard loads quickly.</small>",
+    unsafe_allow_html=True,
 )
 
 dataset = load_csv(str(PROCESSED / "dataset.csv"))
@@ -121,25 +132,41 @@ with tabs[0]:
     view = filter_frame(dataset)
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Rows", f"{len(view):,}")
-    c2.metric("Mean PM2.5", f"{view['pm25'].mean():.1f} µg/m³")
-    c3.metric("95th percentile", f"{view['pm25'].quantile(0.95):.1f} µg/m³")
-    aod_cov = 100 * (1 - view["aod"].isna().mean()) if "aod" in view else 0.0
-    c4.metric("AOD coverage", f"{aod_cov:.0f}%")
+    # Aggregate summaries up front (cheap), cache plots (expensive).
+    st.markdown(f"""
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+        <div style="background:#f0f2f6;padding:15px;border-radius:8px;text-align:center">
+            <div style="font-size:22px;font-weight:bold">{len(view):,}</div>
+            <div style="font-size:12px;color:#555">rows</div>
+        </div>
+        <div style="background:#f0f2f6;padding:15px;border-radius:8px;text-align:center">
+            <div style="font-size:22px;font-weight:bold">{view['pm25'].mean():.1f}</div>
+            <div style="font-size:12px;color:#555">mean PM2.5</div>
+        </div>
+        <div style="background:#f0f2f6;padding:15px;border-radius:8px;text-align:center">
+            <div style="font-size:22px;font-weight:bold">{view['pm25'].quantile(0.95):.1f}</div>
+            <div style="font-size:12px;color:#555">95th percentile</div>
+        </div>
+        <div style="background:#f0f2f6;padding:15px;border-radius:8px;text-align:center">
+            <div style="font-size:22px;font-weight:bold">{100*(1-view['aod'].isna().mean()):.0f}</div>
+            <div style="font-size:12px;color:#555">AOD coverage</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    st.subheader("Monthly mean by station")
     monthly = (
         view.dropna(subset=["pm25"])
         .assign(month=lambda d: d["time"].dt.tz_localize(None).dt.to_period("M").dt.to_timestamp())
         .groupby(["month", "station"])["pm25"].mean()
         .reset_index()
     )
+    st.subheader("Monthly mean by station")
+    @st.cache_data(show_spinner=True)
+    def _monthly_fig(df):
+        return px.line(df, x="month", y="pm25", color="station", markers=True,
+                       labels={"pm25": "PM2.5 (µg/m³)", "month": ""})
     if not monthly.empty:
-        st.plotly_chart(
-            px.line(monthly, x="month", y="pm25", color="station", markers=True,
-                    labels={"pm25": "PM2.5 (µg/m³)", "month": ""}),
-            use_container_width=True,
-        )
+        st.plotly_chart(_monthly_fig(monthly), use_container_width=True)
 
     left, right = st.columns(2)
     with left:
@@ -151,22 +178,26 @@ with tabs[0]:
             .reset_index()
         )
         if not diurnal.empty:
-            st.plotly_chart(
-                px.line(diurnal, x="hour", y="pm25", color="station",
-                        labels={"pm25": "PM2.5 (µg/m³)", "hour": "hour of day (UTC)"}),
-                use_container_width=True,
-            )
+            @st.cache_data(show_spinner=True)
+            def _diurnal_fig(df):
+                return px.line(df, x="hour", y="pm25", color="station",
+                               labels={"pm25": "PM2.5 (µg/m³)", "hour": "hour of day (UTC)"})
+            st.plotly_chart(_diurnal_fig(diurnal), use_container_width=True)
 
     with right:
         st.subheader("Distribution")
-        if view["pm25"].notna().any():
+        @st.cache_data(show_spinner=True)
+        def _violin_fig(view, chosen):
             fig = go.Figure()
             for station in chosen:
                 series = view.loc[view["station"] == station, "pm25"].dropna()
                 if len(series):
-                    fig.add_trace(go.Violin(y=series, name=station, box_visible=True, meanline_visible=True))
+                    fig.add_trace(go.Violin(y=series, name=station, box_visible=True,
+                                            meanline_visible=True))
             fig.update_layout(yaxis_title="PM2.5 (µg/m³)", showlegend=False, height=420)
-            st.plotly_chart(fig, use_container_width=True)
+            return fig
+        if view["pm25"].notna().any():
+            st.plotly_chart(_violin_fig(view, chosen), use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # 2. Model
@@ -233,30 +264,37 @@ with tabs[1]:
             pred_view = predictions[predictions["station"].isin(chosen)]
             if not pred_view.empty:
                 sample = pred_view.sample(min(4000, len(pred_view)), random_state=0)
-                scatter = px.scatter(
-                    sample, x="y", y="pred", color="station", opacity=0.45,
-                    labels={"y": "observed PM2.5", "pred": "predicted PM2.5"},
-                )
-                limit = float(max(sample["y"].max(), sample["pred"].max()))
-                scatter.add_shape(type="line", x0=0, y0=0, x1=limit, y1=limit,
+                @st.cache_data(show_spinner=True)
+                def _scatter_fig(sample):
+                    limit = float(max(sample["y"].max(), sample["pred"].max()))
+                    fig = px.scatter(sample, x="y", y="pred", color="station", opacity=0.45,
+                                     labels={"y": "observed PM2.5", "pred": "predicted PM2.5"})
+                    fig.add_shape(type="line", x0=0, y0=0, x1=limit, y1=limit,
                                   line=dict(dash="dash", color="grey"))
-                scatter.update_layout(height=480)
+                    fig.update_layout(height=480)
+                    return fig
+                scatter = _scatter_fig(sample)
                 st.plotly_chart(scatter, use_container_width=True)
 
                 if {"q10", "q90"} <= set(pred_view.columns):
                     st.subheader("Prediction interval")
                     ts = pred_view.sort_values("time").tail(400)
-                    band = go.Figure()
-                    band.add_trace(go.Scatter(x=ts["time"], y=ts["q90"], line=dict(width=0), showlegend=False))
-                    band.add_trace(go.Scatter(x=ts["time"], y=ts["q10"], line=dict(width=0),
-                                              fill="tonexty", fillcolor="rgba(194,65,12,0.18)",
-                                              name="80% interval"))
-                    band.add_trace(go.Scatter(x=ts["time"], y=ts["y"], name="observed",
-                                              line=dict(color="black", width=1.4)))
-                    band.add_trace(go.Scatter(x=ts["time"], y=ts["pred"], name="predicted",
-                                              line=dict(color=ACCENT, width=1.6)))
-                    band.update_layout(height=380, yaxis_title="PM2.5 (µg/m³)")
-                    st.plotly_chart(band, use_container_width=True)
+
+                    @st.cache_data(show_spinner=True)
+                    def _band_fig(ts):
+                        band = go.Figure()
+                        band.add_trace(go.Scatter(x=ts["time"], y=ts["q90"], line=dict(width=0),
+                                                  showlegend=False))
+                        band.add_trace(go.Scatter(x=ts["time"], y=ts["q10"], line=dict(width=0),
+                                                  fill="tonexty", fillcolor="rgba(194,65,12,0.18)",
+                                                  name="80% interval"))
+                        band.add_trace(go.Scatter(x=ts["time"], y=ts["y"], name="observed",
+                                                  line=dict(color="black", width=1.4)))
+                        band.add_trace(go.Scatter(x=ts["time"], y=ts["pred"], name="predicted",
+                                                  line=dict(color=ACCENT, width=1.6)))
+                        band.update_layout(height=380, yaxis_title="PM2.5 (µg/m³)")
+                        return band
+                    st.plotly_chart(_band_fig(ts), use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # 3. Explainability
@@ -291,12 +329,13 @@ with tabs[2]:
             keep = shap_seasonal.groupby("feature")["share"].max().nlargest(14).index
             pivot = pivot.loc[[f for f in keep if f in pivot.index]]
 
-            heat = px.imshow(
-                pivot, aspect="auto", color_continuous_scale="OrRd",
-                labels={"x": "", "y": "", "color": "share"},
-            )
-            heat.update_layout(height=520)
-            st.plotly_chart(heat, use_container_width=True)
+            @st.cache_data(show_spinner=True)
+            def _heatmap(pivot):
+                heat = px.imshow(pivot, aspect="auto", color_continuous_scale="OrRd",
+                                 labels={"x": "", "y": "", "color": "share"})
+                heat.update_layout(height=520)
+                return heat
+            st.plotly_chart(_heatmap(pivot), use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # 4. Sources
@@ -314,11 +353,12 @@ with tabs[3]:
         with left:
             st.subheader("Proxy prevalence by season")
             pv = prevalence.set_index("season") if "season" in prevalence else prevalence
-            st.plotly_chart(
-                px.imshow(pv, aspect="auto", color_continuous_scale="Teal",
-                          labels={"color": "share of hours"}),
-                use_container_width=True,
-            )
+
+            @st.cache_data(show_spinner=True)
+            def _prox_heat(pv):
+                return px.imshow(pv, aspect="auto", color_continuous_scale="Teal",
+                                 labels={"color": "share of hours"})
+            st.plotly_chart(_prox_heat(pv), use_container_width=True)
         with right:
             st.subheader("Mean PM2.5 per proxy")
             conc = load_csv(str(ARTIFACTS / "proxy_concentration.csv"))
@@ -393,11 +433,14 @@ with tabs[4]:
                     }
                 )
             width = pd.DataFrame(rows).sort_values("rh_mid")
-            st.plotly_chart(
-                px.line(width, x="rh_mid", y="interval_width", color="aod_state", markers=True,
-                        labels={"rh_mid": "relative humidity (%)", "interval_width": "80% interval width"}),
-                use_container_width=True,
-            )
+
+            @st.cache_data(show_spinner=True)
+            def _width_fig(width):
+                return px.line(width, x="rh_mid", y="interval_width", color="aod_state",
+                               markers=True,
+                               labels={"rh_mid": "relative humidity (%)",
+                                       "interval_width": "80% interval width"})
+            st.plotly_chart(_width_fig(width), use_container_width=True)
 
 # ---------------------------------------------------------------------------
 # 6. Method
