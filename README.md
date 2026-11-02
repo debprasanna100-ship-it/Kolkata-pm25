@@ -45,9 +45,10 @@ splits produce R² that collapses the moment you try it on next month's data.
 
 | Layer | Status | What it gives you |
 |---|---|---|
-| **Core** | done | Hourly PM2.5 + NO2 prediction from AOD, weather, fires, time |
+| **Core** | done | Hourly PM2.5 estimation from AOD, weather, fires, time |
 | **Extension** | done | 1 h / 6 h / 24 h forecasts, four model families compared |
 | **Stretch** | done | SHAP attribution + rule-based source proxies + Streamlit dashboard |
+| **Tests** | done | 44 pytest cases + a real-render dashboard smoke test |
 
 Skipped on purpose: PMF, low-cost sensor calibration, street-level mapping. All three need
 speciated filter data or a sensor network that isn't publicly available for Kolkata.
@@ -74,7 +75,7 @@ data/                    features/               models/                explain/
 
 ## What the demo run actually produces
 
-Real output from `python -m pm25.cli all` on the synthetic dataset. **These are pipeline
+Real output from `python -m pm25.cli all` on the synthetic dataset (**2026-11-02 audit pass**). **These are pipeline
 checks, not findings** — but the *shape* is what you should expect from real data, and it
 is the shape your report has to explain.
 
@@ -87,22 +88,22 @@ computed on the winter slice (Nov–Feb), where the threshold crossings actually
 | **+1 h** | persistence | 14.53 | 10.24 | 0.871 | 0.76 | — |
 | | climatology | 29.92 | 19.34 | 0.452 | 0.00 | — |
 | | ridge | 13.54 | 9.53 | 0.888 | 0.79 | — |
-| | **GBDT** | **12.50** | **8.62** | **0.904** | 0.77 | 0.737 |
+| | **GBDT** | **12.74** | **8.73** | **0.901** | 0.73 | 0.784 |
 | **+6 h** | persistence | 29.46 | 21.77 | 0.468 | 0.49 | — |
-| | **GBDT** | **18.07** | **12.34** | **0.800** | 0.44 | 0.736 |
+| | **GBDT** | **18.17** | **12.34** | **0.798** | 0.41 | 0.778 |
 | **+24 h** | persistence | 24.50 | 16.98 | 0.632 | 0.54 | — |
 | | ridge | 19.28 | 13.62 | 0.772 | 0.51 | — |
-| | **GBDT** | **19.47** | **13.27** | **0.768** | 0.32 | 0.729 |
+| | **GBDT** | **19.40** | **13.20** | **0.769** | 0.30 | 0.772 |
 
 Four things worth reading off this table:
 
 1. **Persistence collapses from R² 0.87 to 0.47 by +6 h.** That is the honest reason a
    model exists at all. At +1 h it is a serious competitor.
-2. **PI80 coverage is 0.73–0.74 against a nominal 0.80.** The intervals are slightly
+2. **PI80 coverage is 0.77–0.78 against a nominal 0.80.** The intervals are slightly
    overconfident. Reporting that instead of hiding it is the point.
-3. **Episode recall falls with lead time** (0.77 → 0.44 → 0.32) while overall R² falls
+3. **Episode recall falls with lead time** (0.73 → 0.41 → 0.30) while overall R² falls
    much less — and by +24 h persistence actually catches *more* episodes (0.54) than the
-   GBDT (0.32). A model can look fine on RMSE and still lose the smog days; that trade
+   GBDT (0.30). A model can look fine on RMSE and still lose the smog days; that trade
    is the thing to report, not hide.
 4. **Climatology is terrible here (R² ≈ 0.45) because the window starts in March.**
    Train-2025 never sees January or February, so its station × month × hour table has no
@@ -267,6 +268,33 @@ kolkata-pm25/
     ├── data_dictionary.md
     └── report_outline.md
 ```
+
+---
+
+## Verification & maintenance
+
+```bash
+make test            # pytest + dashboard smoke test
+python -m pytest tests -q   # 44 tests, all passing
+```
+
+`make all` reproduces the demo numbers in this README: build → train → explain.
+The dashboard (`python -m pm25.cli app`) caches plot figures, so after `train` or
+`explain` reruns it serves the freshly generated artifacts automatically — and it warns
+rather than crashing if filters select no rows or the AOD column is missing (live mode
+without GEE).
+
+## Commit history
+
+`f31b4ee` Initial commit — pipeline, leakage guards, pytest suite
+`c21fa0e` OpenAQ client: rate-limit patience + resumable chunk cache
+`66401da` OpenAQ: per-pollutant sensor fallback + live coverage guidance
+`0f40ca1` Live-data fixes: sensor fallback hardening, pandas 3 dtype guard, hourly collapse
+`c28ce89` Update config defaults to verified live coverage window (2025-03..2026-10)
+`c72bd4a` Regenerate README demo tables for the new default window (2025-03..2026-10)
+`f101864` Dashboard: cache every plot and use stat cards so live data loads in seconds
+`6f061d2` Audit pass 2026-11-02: fix CLI arg ordering, stale-artifact caching,
+          pandas 4 deprecations, remove dead code
 
 ---
 
