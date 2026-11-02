@@ -118,10 +118,6 @@ def by_season(shap_values: np.ndarray, X: pd.DataFrame, times: pd.Series) -> pd.
     return result.sort_values(["season", "mean_abs_shap"], ascending=[True, False]).reset_index(drop=True)
 
 
-def top_features(per_feature: pd.DataFrame, k: int = 8) -> list[str]:
-    return per_feature.head(k)["feature"].tolist()
-
-
 def seasonal_importance(model, X: pd.DataFrame, y: pd.Series, times: pd.Series,
                         sample: int = 4000, seed: int = 42) -> tuple[pd.DataFrame, str]:
     """Per-season importance with the same schema regardless of method.

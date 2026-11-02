@@ -105,9 +105,9 @@ def generate(cfg: Config) -> pd.DataFrame:
     n = len(times)
     log.info("Synthetic generator: %d hours x %d stations = %d rows", n, len(stations), n * len(stations))
 
-    doy = times.dayofyear.to_numpy().astype(float)
+    doy = times.day_of_year.to_numpy().astype(float)
     hour = times.hour.to_numpy().astype(float)
-    dow = times.dayofweek.to_numpy()
+    dow = times.day_of_week.to_numpy()
 
     winter = _seasonal(doy, peak_doy=10)        # +1 mid-January
     monsoon = _seasonal(doy, peak_doy=205)      # +1 late July
@@ -282,17 +282,3 @@ def generate(cfg: Config) -> pd.DataFrame:
     out = out.sort_values(["station", "time"]).reset_index(drop=True)
     out["aod"] = out.groupby("station")["aod"].transform(lambda s: s)  # keep dtype
     return out
-
-
-def summarise(df: pd.DataFrame) -> pd.DataFrame:
-    """Quick sanity table printed by the build step."""
-    g = df.groupby("station")["pm25"]
-    return pd.DataFrame(
-        {
-            "mean": g.mean().round(1),
-            "p50": g.median().round(1),
-            "p95": g.quantile(0.95).round(1),
-            "max": g.max().round(1),
-            "aod_missing_pct": df.groupby("station")["aod"].apply(lambda s: round(100 * s.isna().mean(), 1)),
-        }
-    )

@@ -56,14 +56,14 @@ def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
     hour = t.dt.hour
     month = t.dt.month
     df["hour"] = hour
-    df["dow"] = t.dt.dayofweek
+    df["dow"] = t.dt.day_of_week
     df["month"] = month
-    df["doy"] = t.dt.dayofyear
+    df["doy"] = t.dt.day_of_year
     df["hour_sin"] = np.sin(2 * np.pi * hour / 24)
     df["hour_cos"] = np.cos(2 * np.pi * hour / 24)
     df["month_sin"] = np.sin(2 * np.pi * month / 12)
     df["month_cos"] = np.cos(2 * np.pi * month / 12)
-    df["is_weekend"] = (t.dt.dayofweek >= 5).astype(int)
+    df["is_weekend"] = (t.dt.day_of_week >= 5).astype(int)
     return df
 
 
@@ -180,23 +180,3 @@ def usable_feature_columns(df: pd.DataFrame, cols: list[str]) -> list[str]:
     if dropped:
         log.info("dropping all-NaN feature columns: %s", dropped)
     return keep
-
-
-def group_of(feature: str) -> str:
-    for name, members in FEATURE_GROUPS.items():
-        if feature in members:
-            return name
-    if feature.startswith("pm25_") or feature.startswith("aod"):
-        return "satellite" if feature.startswith("aod") else "autoregressive"
-    if feature.startswith("fire"):
-        return "fires"
-    return "other"
-
-
-def split_xy(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    cols = feature_columns(df)
-    X = df[cols].copy()
-    # Median-impute per column; the model also gets aod_missing so it can adapt.
-    X = X.fillna(X.median(numeric_only=True))
-    y = df["y"].astype(float)
-    return X, y

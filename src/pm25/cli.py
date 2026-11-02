@@ -19,6 +19,14 @@ log = get_logger("pm25.cli")
 
 
 def _parser() -> argparse.ArgumentParser:
+    # --config/--root are accepted both before and after the subcommand:
+    # the parent parser carries SUPPRESS defaults so a subcommand occurrence
+    # overrides the global one without erasing it (argparse would otherwise
+    # let the subparser's default clobber the value parsed earlier).
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--config", default=argparse.SUPPRESS, help="path to config.yaml")
+    common.add_argument("--root", default=argparse.SUPPRESS, help="project root (defaults to cwd)")
+
     parser = argparse.ArgumentParser(
         prog="pm25",
         description="Hourly PM2.5 estimation and source attribution for Kolkata",
@@ -28,13 +36,13 @@ def _parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", required=True)
 
-    build = sub.add_parser("build", help="assemble the dataset")
+    build = sub.add_parser("build", help="assemble the dataset", parents=[common])
     build.add_argument("--mode", choices=["demo", "live"], default=None,
                        help="override data.mode")
     build.add_argument("--start", default=None)
     build.add_argument("--end", default=None)
 
-    train = sub.add_parser("train", help="train and evaluate models")
+    train = sub.add_parser("train", help="train and evaluate models", parents=[common])
     train.add_argument("--horizons", default=None,
                        help="comma separated, e.g. 0,1,6,24")
     train.add_argument("--test-year", type=int, default=None)
@@ -42,12 +50,12 @@ def _parser() -> argparse.ArgumentParser:
     train.add_argument("--deep", action="store_true", help="also train the LSTM (needs torch)")
     train.add_argument("--quick", action="store_true", help="fewer trees, no LOSO")
 
-    sub.add_parser("explain", help="SHAP + source proxy agreement")
+    sub.add_parser("explain", help="SHAP + source proxy agreement", parents=[common])
 
-    app = sub.add_parser("app", help="launch the Streamlit dashboard")
+    app = sub.add_parser("app", help="launch the Streamlit dashboard", parents=[common])
     app.add_argument("--port", type=int, default=8501)
 
-    sub.add_parser("all", help="build -> train -> explain")
+    sub.add_parser("all", help="build -> train -> explain", parents=[common])
     return parser
 
 

@@ -74,7 +74,7 @@ def assign(df: pd.DataFrame) -> pd.DataFrame:
         ratio = pd.Series(np.nan, index=out.index)
 
     hour = out["time"].dt.hour
-    weekday = out["time"].dt.dayofweek < 5
+    weekday = out["time"].dt.day_of_week < 5
     rush = ((hour >= 7) & (hour <= 11)) | ((hour >= 17) & (hour <= 22))
 
     rh = out["rh"] if "rh" in out else pd.Series(50.0, index=out.index)
@@ -108,11 +108,3 @@ def prevalence(df: pd.DataFrame, by: str = "season") -> pd.DataFrame:
 def mean_concentration_by_proxy(df: pd.DataFrame) -> pd.DataFrame:
     stats = df.groupby("proxy")["pm25"].agg(["count", "mean", "median"]).round(1)
     return stats.reindex(PROXY_LABELS).dropna(how="all")
-
-
-def season_column(df: pd.DataFrame) -> pd.DataFrame:
-    from .importance import season_of
-
-    out = df.copy()
-    out["season"] = out["time"].dt.month.map(season_of)
-    return out

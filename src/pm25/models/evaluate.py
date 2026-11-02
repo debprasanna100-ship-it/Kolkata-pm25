@@ -96,16 +96,3 @@ def winter_mask(df: pd.DataFrame) -> pd.Series:
     and FAR describe the winter smog season the validation protocol promises,
     not a year-round average dominated by ordinary days."""
     return df["time"].dt.month.isin(WINTER_MONTHS)
-
-
-def summarise_by_station(df: pd.DataFrame, y_pred) -> pd.DataFrame:
-    tmp = df[["station", "y", "time"]].copy()
-    tmp["pred"] = np.asarray(y_pred)
-    rows = []
-    for station, chunk in tmp.groupby("station"):
-        m = regression_metrics(chunk["y"], chunk["pred"])
-        m["station"] = station
-        rows.append(m)
-    return pd.DataFrame(rows).set_index("station")[
-        ["n", "rmse", "mae", "r2", "bias", "mape"]
-    ].round(3)

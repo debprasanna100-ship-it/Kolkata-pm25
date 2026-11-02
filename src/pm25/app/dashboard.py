@@ -30,12 +30,22 @@ ACCENT = "#c2410c"
 COOL = "#0f766e"
 
 
-@st.cache_data(show_spinner=False)
-def load_csv(path: str) -> pd.DataFrame | None:
+def _file_mtime(path: str | Path) -> int:
+    """Mtime as an int, or 0 when missing.
+
+    Passed into the cached loaders below so the cache key changes whenever the
+    file on disk changes - without this, a retrain leaves the dashboard
+    showing the previous run's artifacts until the cache is cleared.
+    """
     p = Path(path)
-    if not p.exists():
+    return int(p.stat().st_mtime) if p.exists() else 0
+
+
+@st.cache_data(show_spinner=False)
+def _load_csv_cached(path: str, mtime: int) -> pd.DataFrame | None:
+    if not mtime:
         return None
-    df = pd.read_csv(p)
+    df = pd.read_csv(path)
     for col in ("time", "date"):
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
@@ -43,9 +53,16 @@ def load_csv(path: str) -> pd.DataFrame | None:
 
 
 @st.cache_data(show_spinner=False)
+def _load_json_cached(path: str, mtime: int) -> dict | None:
+    return json.loads(Path(path).read_text(encoding="utf-8")) if mtime else None
+
+
+def load_csv(path: str) -> pd.DataFrame | None:
+    return _load_csv_cached(str(path), _file_mtime(path))
+
+
 def load_json(path: str) -> dict | None:
-    p = Path(path)
-    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+    return _load_json_cached(str(path), _file_mtime(path))
 
 
 def missing_notice(what: str, command: str) -> None:
@@ -53,12 +70,6 @@ def missing_notice(what: str, command: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-
-st.set_page_config(
-    page_title="Kolkata PM2.5 — Estimation & Source Attribution",
-    page_icon="🌫️",
-    layout="wide",
-)
 
 st.set_page_config(
     page_title="Kolkata PM2.5 — Estimation & Source Attribution",
@@ -133,26 +144,36 @@ with tabs[0]:
 
     c1, c2, c3, c4 = st.columns(4)
     # Aggregate summaries up front (cheap), cache plots (expensive).
-    st.markdown(f"""
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
-        <div style="background:#f0f2f6;padding:15px;border-radius:8px;text-align:center">
-            <div style="font-size:22px;font-weight:bold">{len(view):,}</div>
-            <div style="font-size:12px;color:#555">rows</div>
+    if view.empty:
+        st.warning("No rows match the current station / date filters. Widen the filters to see data.")
+    else:
+        mean_pm = view["pm25"].mean()
+        p95_pm = view["pm25"].quantile(0.95)
+        aod_cov = (
+            f"{100 * (1 - view['aod'].isna().mean()):.0f}"
+            if "aod" in view.columns
+            else "—"
+        )
+        st.markdown(f"""
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+            <div style="background:#f0f2f6;padding:15px;border-radius:8px;text-align:center">
+                <div style="font-size:22px;font-weight:bold">{len(view):,}</div>
+                <div style="font-size:12px;color:#555">rows</div>
+            </div>
+            <div style="background:#f0f2f6;padding:15px;border-radius:8px;text-align:center">
+                <div style="font-size:22px;font-weight:bold">{mean_pm:.1f}</div>
+                <div style="font-size:12px;color:#555">mean PM2.5</div>
+            </div>
+            <div style="background:#f0f2f6;padding:15px;border-radius:8px;text-align:center">
+                <div style="font-size:22px;font-weight:bold">{p95_pm:.1f}</div>
+                <div style="font-size:12px;color:#555">95th percentile</div>
+            </div>
+            <div style="background:#f0f2f6;padding:15px;border-radius:8px;text-align:center">
+                <div style="font-size:22px;font-weight:bold">{aod_cov}</div>
+                <div style="font-size:12px;color:#555">AOD coverage</div>
+            </div>
         </div>
-        <div style="background:#f0f2f6;padding:15px;border-radius:8px;text-align:center">
-            <div style="font-size:22px;font-weight:bold">{view['pm25'].mean():.1f}</div>
-            <div style="font-size:12px;color:#555">mean PM2.5</div>
-        </div>
-        <div style="background:#f0f2f6;padding:15px;border-radius:8px;text-align:center">
-            <div style="font-size:22px;font-weight:bold">{view['pm25'].quantile(0.95):.1f}</div>
-            <div style="font-size:12px;color:#555">95th percentile</div>
-        </div>
-        <div style="background:#f0f2f6;padding:15px;border-radius:8px;text-align:center">
-            <div style="font-size:22px;font-weight:bold">{100*(1-view['aod'].isna().mean()):.0f}</div>
-            <div style="font-size:12px;color:#555">AOD coverage</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
     monthly = (
         view.dropna(subset=["pm25"])

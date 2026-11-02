@@ -74,17 +74,3 @@ def _json_default(obj: Any) -> Any:
     if isinstance(obj, (pd.Timestamp,)):
         return obj.isoformat()
     return str(obj)
-
-
-def human_bytes(num: float) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if num < 1024:
-            return f"{num:.1f} {unit}"
-        num /= 1024
-    return f"{num:.1f} TB"
-
-
-def require(condition: bool, message: str) -> None:
-    """Fail fast with an actionable message instead of a stack trace deep in pandas."""
-    if not condition:
-        raise SystemExit(f"\n[pm25] {message}\n")
