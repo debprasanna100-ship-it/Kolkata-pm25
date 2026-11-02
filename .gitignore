@@ -19,6 +19,15 @@ venv/
 .idea/
 .vscode/
 
+# node / frontend
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+frontend/.turbo/
+frontend/*.tsbuildinfo
+node_modules/
+*.log
+
 # accidental secret files (keep local, never commit)
 example.env
 *.env.bak

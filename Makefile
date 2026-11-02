@@ -4,17 +4,19 @@
 PY ?= python
 export PYTHONPATH := src
 
-.PHONY: help install build train explain app all test clean
+.PHONY: help install build train explain app all test clean frontend-dev frontend-build
 
 help:
-	@echo "make install   install core + dev dependencies"
-	@echo "make build     assemble the dataset (demo mode)"
-	@echo "make train     train + evaluate all horizons"
-	@echo "make explain   SHAP / permutation + source proxies"
-	@echo "make all       build -> train -> explain"
-	@echo "make app       launch the dashboard"
-	@echo "make test      unit tests (pytest) + dashboard smoke test"
-	@echo "make clean     remove generated data and artefacts"
+	@echo "make install        install core + dev dependencies"
+	@echo "make build          assemble the dataset (demo mode)"
+	@echo "make train          train + evaluate all horizons"
+	@echo "make explain        SHAP / permutation + source proxies"
+	@echo "make all            build -> train -> explain"
+	@echo "make app            launch the Streamlit dashboard"
+	@echo "make frontend-dev   launch the Next.js modern frontend"
+	@echo "make frontend-build build the Next.js production bundle"
+	@echo "make test           unit tests (pytest) + dashboard smoke test"
+	@echo "make clean          remove generated data and artefacts"
 
 install:
 	$(PY) -m pip install -r requirements.txt
@@ -33,6 +35,12 @@ all:
 
 app:
 	$(PY) -m pm25.cli app
+
+frontend-dev:
+	cd frontend && npm run dev
+
+frontend-build:
+	cd frontend && npm run build
 
 test:
 	$(PY) -m pytest tests -q

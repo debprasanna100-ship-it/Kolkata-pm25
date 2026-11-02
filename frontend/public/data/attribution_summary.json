@@ -1,0 +1,205 @@
+{
+  "method": "permutation",
+  "seasonal_method": "permutation",
+  "top_features": [
+    "month_cos",
+    "aod",
+    "fire_upwind",
+    "ventilation",
+    "hour_sin",
+    "pbl_inv",
+    "pbl",
+    "hour_cos",
+    "lat",
+    "aod_lag24",
+    "precip",
+    "month_sin"
+  ],
+  "proxy_share_overall": {
+    "background": 0.593,
+    "biomass": 0.175,
+    "traffic": 0.141,
+    "dust": 0.068,
+    "secondary": 0.022
+  },
+  "agreement": {
+    "monsoon": {
+      "top_features": [
+        "month_cos",
+        "fire_upwind",
+        "ventilation",
+        "aod",
+        "hour_sin"
+      ],
+      "proxies": {
+        "biomass": {
+          "share": 0.187,
+          "hits": [
+            "fire_upwind"
+          ],
+          "supported": true
+        },
+        "dust": {
+          "share": 0.006,
+          "hits": [
+            "ventilation"
+          ],
+          "supported": false
+        },
+        "traffic": {
+          "share": 0.047,
+          "hits": [
+            "hour_sin"
+          ],
+          "supported": false
+        },
+        "secondary": {
+          "share": 0.045,
+          "hits": [
+            "month_cos"
+          ],
+          "supported": false
+        },
+        "background": {
+          "share": 0.715,
+          "hits": [
+            "ventilation"
+          ],
+          "supported": true
+        }
+      }
+    },
+    "post_monsoon": {
+      "top_features": [
+        "aod",
+        "fire_upwind",
+        "hour_sin",
+        "pbl_inv",
+        "pbl"
+      ],
+      "proxies": {
+        "biomass": {
+          "share": 0.479,
+          "hits": [
+            "fire_upwind"
+          ],
+          "supported": true
+        },
+        "dust": {
+          "share": 0.008,
+          "hits": [
+            "pbl"
+          ],
+          "supported": false
+        },
+        "traffic": {
+          "share": 0.156,
+          "hits": [
+            "hour_sin"
+          ],
+          "supported": true
+        },
+        "secondary": {
+          "share": 0.019,
+          "hits": [
+            "pbl"
+          ],
+          "supported": false
+        },
+        "background": {
+          "share": 0.339,
+          "hits": [
+            "pbl"
+          ],
+          "supported": true
+        }
+      }
+    },
+    "pre_monsoon": {
+      "top_features": [
+        "aod",
+        "month_cos",
+        "ventilation",
+        "hour_sin",
+        "pbl_inv"
+      ],
+      "proxies": {
+        "biomass": {
+          "share": 0.003,
+          "hits": [],
+          "supported": false
+        },
+        "dust": {
+          "share": 0.147,
+          "hits": [
+            "ventilation"
+          ],
+          "supported": true
+        },
+        "traffic": {
+          "share": 0.209,
+          "hits": [
+            "hour_sin"
+          ],
+          "supported": true
+        },
+        "secondary": {
+          "share": 0.0,
+          "hits": [
+            "month_cos"
+          ],
+          "supported": false
+        },
+        "background": {
+          "share": 0.64,
+          "hits": [
+            "ventilation"
+          ],
+          "supported": true
+        }
+      }
+    },
+    "winter": {
+      "top_features": [
+        "aod",
+        "hour_sin",
+        "fire_upwind",
+        "hour_cos",
+        "aod_lag24"
+      ],
+      "proxies": {
+        "biomass": {
+          "share": 0.047,
+          "hits": [
+            "fire_upwind"
+          ],
+          "supported": false
+        },
+        "dust": {
+          "share": 0.195,
+          "hits": [],
+          "supported": false
+        },
+        "traffic": {
+          "share": 0.281,
+          "hits": [
+            "hour_sin",
+            "hour_cos"
+          ],
+          "supported": true
+        },
+        "secondary": {
+          "share": 0.0,
+          "hits": [],
+          "supported": false
+        },
+        "background": {
+          "share": 0.477,
+          "hits": [],
+          "supported": false
+        }
+      }
+    }
+  },
+  "caveat": "Proxy labels are rule-based heuristics over co-pollutants and meteorology, not measured source contributions. Agreement with SHAP supports the interpretation; it does not prove it."
+}

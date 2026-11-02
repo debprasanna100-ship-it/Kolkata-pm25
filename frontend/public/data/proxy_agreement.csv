@@ -1,0 +1,21 @@
+season,proxy,proxy_share,expected_drivers,drivers_in_top,n_hits,supported
+monsoon,biomass,0.187,"fire_upwind, fire_count, fire_upwind_lag24, wind_dir_cos, wind_dir_sin",fire_upwind,1,True
+monsoon,dust,0.006,"wind_speed, rh, ventilation, pbl",ventilation,1,False
+monsoon,traffic,0.047,"hour_sin, hour_cos, dow, dist_road_km, is_weekend",hour_sin,1,False
+monsoon,secondary,0.045,"rh, temp, pbl, month_sin, month_cos",month_cos,1,False
+monsoon,background,0.715,"pbl, ventilation, wind_speed",ventilation,1,True
+post_monsoon,biomass,0.479,"fire_upwind, fire_count, fire_upwind_lag24, wind_dir_cos, wind_dir_sin",fire_upwind,1,True
+post_monsoon,dust,0.008,"wind_speed, rh, ventilation, pbl",pbl,1,False
+post_monsoon,traffic,0.156,"hour_sin, hour_cos, dow, dist_road_km, is_weekend",hour_sin,1,True
+post_monsoon,secondary,0.019,"rh, temp, pbl, month_sin, month_cos",pbl,1,False
+post_monsoon,background,0.339,"pbl, ventilation, wind_speed",pbl,1,True
+pre_monsoon,biomass,0.003,"fire_upwind, fire_count, fire_upwind_lag24, wind_dir_cos, wind_dir_sin",-,0,False
+pre_monsoon,dust,0.147,"wind_speed, rh, ventilation, pbl",ventilation,1,True
+pre_monsoon,traffic,0.209,"hour_sin, hour_cos, dow, dist_road_km, is_weekend",hour_sin,1,True
+pre_monsoon,secondary,0.0,"rh, temp, pbl, month_sin, month_cos",month_cos,1,False
+pre_monsoon,background,0.64,"pbl, ventilation, wind_speed",ventilation,1,True
+winter,biomass,0.047,"fire_upwind, fire_count, fire_upwind_lag24, wind_dir_cos, wind_dir_sin",fire_upwind,1,False
+winter,dust,0.195,"wind_speed, rh, ventilation, pbl",-,0,False
+winter,traffic,0.281,"hour_sin, hour_cos, dow, dist_road_km, is_weekend","hour_sin, hour_cos",2,True
+winter,secondary,0.0,"rh, temp, pbl, month_sin, month_cos",-,0,False
+winter,background,0.477,"pbl, ventilation, wind_speed",-,0,False
