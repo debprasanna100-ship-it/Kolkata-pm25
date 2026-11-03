@@ -23,14 +23,24 @@ import { Loader2 } from "lucide-react";
 export default function Home() {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
 
-  // TanStack Query hooks replace the manual useEffect/useState pattern
-  const { data: metrics, isLoading: mLoading } = useMetrics();
-  const { data: attributionSummary, isLoading: aLoading } = useAttributionSummary();
-  const { data: proxyAgreement = [], isLoading: paLoading } = useProxyAgreement();
-  const { data: seasonalImportance = [], isLoading: siLoading } = useSeasonalImportance();
-  const { data: globalImportance = [], isLoading: giLoading } = useGlobalImportance();
-  const { data: proxyPrevalence = [], isLoading: ppLoading } = useProxyPrevalence();
-  const { data: predictions = [], isLoading: predLoading } = usePredictions();
+  // TanStack Query hooks replace the manual useEffect/useState pattern.
+  // `?? null` normalizes undefined (query not yet resolved) to match the
+  // views' prop types, which accept null for "artifact missing".
+  const { data: metricsData, isLoading: mLoading } = useMetrics();
+  const { data: attributionData, isLoading: aLoading } = useAttributionSummary();
+  const { data: agreementData, isLoading: paLoading } = useProxyAgreement();
+  const { data: seasonalData, isLoading: siLoading } = useSeasonalImportance();
+  const { data: globalImpData, isLoading: giLoading } = useGlobalImportance();
+  const { data: prevalenceData, isLoading: ppLoading } = useProxyPrevalence();
+  const { data: predictionsData, isLoading: predLoading } = usePredictions();
+
+  const metrics = metricsData ?? null;
+  const attributionSummary = attributionData ?? null;
+  const proxyAgreement = agreementData ?? [];
+  const seasonalImportance = seasonalData ?? [];
+  const globalImportance = globalImpData ?? [];
+  const proxyPrevalence = prevalenceData ?? [];
+  const predictions = predictionsData ?? [];
 
   const loading = mLoading || aLoading || paLoading || siLoading || giLoading || ppLoading || predLoading;
 

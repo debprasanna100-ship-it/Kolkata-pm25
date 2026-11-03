@@ -53,11 +53,50 @@ export function parseCSV<T = Record<string, any>>(csvText: string): T[] {
   return rows;
 }
 
+/**
+ * Parse JSON that may contain bare NaN/Infinity tokens (Python's json.dumps
+ * emits them by default, and they are invalid per RFC 8259). We replace the
+ * tokens with null before parsing so the browser's strict JSON.parse succeeds.
+ */
+function parseLenientJSON(text: string): any {
+  // Replace bare NaN / Infinity / -Infinity tokens that appear as object or
+  // array values (i.e. preceded by ':' or ',' and not inside a quoted string)
+  // with null. A tiny scanner keeps this correct even if a quoted value ever
+  // contains the substring "NaN".
+  let out = "";
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      out += ch;
+      if (escape) escape = false;
+      else if (ch === "\\") escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    const rest = text.slice(i);
+    const m = rest.match(/^(NaN|-Infinity|Infinity)(?=[\s,\]}:]|$)/);
+    if (m) {
+      out += "null";
+      i += m[1].length - 1;
+      continue;
+    }
+    out += ch;
+  }
+  return JSON.parse(out);
+}
+
 export async function fetchMetrics(): Promise<Record<string, any> | null> {
   try {
     const res = await fetch("/data/metrics.json");
     if (!res.ok) return null;
-    return await res.json();
+    return parseLenientJSON(await res.text());
   } catch {
     return null;
   }
@@ -67,7 +106,7 @@ export async function fetchAttributionSummary(): Promise<Record<string, any> | n
   try {
     const res = await fetch("/data/attribution_summary.json");
     if (!res.ok) return null;
-    return await res.json();
+    return parseLenientJSON(await res.text());
   } catch {
     return null;
   }

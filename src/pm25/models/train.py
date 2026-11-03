@@ -185,7 +185,7 @@ def run(
             attrib_frame = a_tr.assign(pred=attrib_model.predict(Xa)["q50"].to_numpy())
 
     # --- persist -----------------------------------------------------------
-    write_json(all_metrics, cfg.metrics_json)
+    write_json(_sanitize_metrics(all_metrics), cfg.metrics_json)
     if predictions_h0 is not None:
         write_table(predictions_h0, artifacts / "predictions.csv")
     if importance_h0 is not None:
@@ -197,6 +197,23 @@ def run(
 
     log.info("done in %.1fs -> %s", time.time() - started, cfg.metrics_json)
     return all_metrics
+
+
+def _sanitize_metrics(obj):
+    """Replace NaN/Infinity with None so the output is valid JSON.
+
+    Python's json.dumps happily emits bare `NaN` tokens, which are invalid
+    per RFC 8259 and crash every strict JSON.parse (the frontend fetches
+    metrics.json with res.json()). Episode metrics legitimately produce NaN
+    when a model has no episodes in the slice; null is the correct encoding.
+    """
+    if isinstance(obj, dict):
+        return {k: _sanitize_metrics(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_metrics(v) for v in obj]
+    if isinstance(obj, float) and not np.isfinite(obj):
+        return None
+    return obj
 
 
 def _print_summary(metrics: dict) -> None:

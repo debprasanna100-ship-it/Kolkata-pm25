@@ -16,18 +16,9 @@
  *   const rows = await query("SELECT station, AVG(pred) FROM predictions GROUP BY station");
  */
 
-// DuckDB-Wasm uses ?url imports for WASM/worker bundles. These are
-// resolved by the bundler (webpack/turbopack) at build time.
-// Type declarations for ?url imports are provided in next-env.d.ts or
-// a custom declaration file.
-declare module "*.wasm?url" {
-  const src: string;
-  export default src;
-}
-declare module "*.worker.js?url" {
-  const src: string;
-  export default src;
-}
+// DuckDB-Wasm uses CDN-hosted bundles (see getDuckDB below) to avoid
+// bundler issues with ?url imports for WASM/worker assets. The type of
+// the dynamically imported duckdb module is inferred from @duckdb/duckdb-wasm.
 
 let dbInstance: any = null;
 let initPromise: Promise<any> | null = null;

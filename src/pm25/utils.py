@@ -56,8 +56,22 @@ def read_table(path: str | Path) -> pd.DataFrame:
 def write_json(obj: Any, path: str | Path) -> Path:
     p = Path(path)
     ensure_dir(p.parent)
-    p.write_text(json.dumps(obj, indent=2, default=_json_default), encoding="utf-8")
+    # allow_nan=False would raise on NaN/inf; instead sanitize first so the
+    # output is always RFC-8259 valid JSON (bare `NaN` tokens break strict
+    # parsers like the browser's JSON.parse used by the frontend).
+    p.write_text(json.dumps(_sanitize_json(obj), indent=2, default=_json_default), encoding="utf-8")
     return p
+
+
+def _sanitize_json(obj: Any) -> Any:
+    """Recursively replace non-finite floats with None (valid JSON null)."""
+    if isinstance(obj, dict):
+        return {k: _sanitize_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_json(v) for v in obj]
+    if isinstance(obj, float) and not np.isfinite(obj):
+        return None
+    return obj
 
 
 def read_json(path: str | Path) -> Any:
