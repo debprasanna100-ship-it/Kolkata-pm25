@@ -1,309 +1,500 @@
-# Kolkata PM2.5 — Hourly Estimation & Source Attribution
+# Kolkata PM2.5
 
-Estimate hourly PM2.5 at Kolkata monitoring stations from satellite AOD, reanalysis
-meteorology, fire transport and time features — then explain *why* the model says what
-it says, and check those explanations against independent source proxies.
+**Estimate and explore hourly PM2.5 at Kolkata monitoring stations, with forecast uncertainty and transparent model analysis.**
 
-Built to run **immediately with no API keys**, then upgrade to real data in one flag.
+This project combines an offline-capable Python research pipeline with two dashboards: a Streamlit app that reads generated artifacts, and a Next.js frontend that reads a checked-in snapshot of those artifacts. It helps researchers and project reviewers inspect the predictions, their limitations, and seasonal source-proxy patterns. The default demo uses synthetic data, so it demonstrates the workflow without making claims about real Kolkata air quality.
+
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white)
+![License](https://img.shields.io/badge/license-not%20specified-lightgrey)
+
+> **Research caveat:** Demo metrics come from a deterministic synthetic dataset. Live-data results depend on station coverage and data quality. Source labels are rule-based proxies; agreement with model importance is not causal proof. Station coordinates are approximate and must be verified before publication.
+
+## Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Screenshots and demo](#screenshots-and-demo)
+- [Technology](#technology)
+- [Architecture and data flow](#architecture-and-data-flow)
+- [Project structure](#project-structure)
+- [Installation](#installation)
+- [Configuration](#configuration-and-environment-variables)
+- [Usage](#usage)
+- [Data and artifacts](#data-and-artifacts)
+- [API and database](#api-and-database)
+- [Security and privacy](#security-and-privacy)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Limitations and next steps](#limitations-and-next-steps)
+- [Hackathon framing](#hackathon-framing)
+- [Contributing](#contributing)
+- [License, credits, and contact](#license-credits-and-contact)
+
+## Overview
+
+Ground monitors measure PM2.5 at fixed locations, while satellite aerosol optical depth
+(AOD) measures a column through the atmosphere and is often unavailable under cloud.
+This project explores how station history, weather, satellite context, fire detections,
+and time features can be combined to estimate near-term surface PM2.5.
+
+The Python pipeline assembles hourly station data, engineers leakage-aware features,
+compares forecasting models, and produces uncertainty and attribution artifacts. The
+dashboards make these outputs easier to inspect. Intended users include air-quality
+researchers, students, and hackathon reviewers evaluating a reproducible analysis
+workflow.
+
+Satellite products are daily or overpass-based. They are broadcast as context across
+hours; hourly variation comes from meteorology, time features, and lagged station readings.
+The README and methodology therefore describe the output as hourly estimation/forecasting,
+not hourly satellite observation.
+
+## Features
+
+### Implemented in the Python pipeline
+
+- **Synthetic demo mode:** deterministic dataset generation with no credentials or network
+  access, suitable for exercising the pipeline.
+- **Optional live data assembly:** adapters for OpenAQ station observations, Open-Meteo or
+  ERA5 weather, Google Earth Engine satellite data, NASA FIRMS fire detections, and
+  OpenStreetMap road proximity via Overpass.
+- **Leakage-aware feature engineering:** cyclical time and wind direction, weather and
+  ventilation terms, station-grouped PM2.5 lags and rolling statistics, AOD missingness,
+  and horizon-specific satellite safeguards. Same-station co-pollutants are excluded from
+  the prediction feature matrix.
+- **Forecast comparison:** persistence and climatology baselines, Ridge, and quantile
+  gradient boosting. Default horizons are 1, 6, and 24 hours; optional LSTM sequence
+  training is available with PyTorch.
+- **Evaluation:** chronological test-year split, optional leave-one-station-out (LOSO),
+  regression metrics, high-PM episode metrics, prediction-interval coverage, and AOD
+  missingness analysis.
+- **Interpretation and source proxies:** SHAP when installed, with permutation-based
+  fallback; seasonal importance; heuristic biomass, dust, traffic, secondary, and
+  background proxy labels; and a proxy/model-driver consistency table.
+
+### Implemented dashboards
+
+- **Streamlit:** overview, model performance, explainability, source proxies, robustness,
+  and methodology views. Reads pipeline outputs from `data/processed/` and `artifacts/`.
+- **Next.js frontend:** overview/map, forecasts and benchmarks, attribution, source
+  proxies, robustness, and a scenario simulator. Most views consume CSV/JSON files from
+  `frontend/public/data/` and can display the checked-in artifact snapshot.
+- **Scenario simulator caveat:** the frontend's “What-If” panel calculates a
+  physics-inspired heuristic in the browser. It does not call the fitted GBDT and is not
+  a validated prediction.
+
+## Screenshots and demo
+
+No screenshots, hosted live demo, or demonstration video are included or configured in
+this repository. Run either dashboard locally using the instructions below to preview
+the project. Add verified screenshots or demo links here when they are available.
+
+## Technology
+
+| Area | Technologies found in the repository |
+|---|---|
+| Python pipeline | Python 3.10+, pandas, NumPy, scikit-learn, PyYAML, joblib |
+| Python dashboard | Streamlit, Plotly |
+| Web frontend | Next.js 15, React 19, TypeScript 5.7, Tailwind CSS |
+| Frontend charts and UI | Apache ECharts, Radix UI, Lucide, Zustand, TanStack Query |
+| Spatial visualization | Projected SVG station map and GeoJSON station asset |
+| In-browser query infrastructure | DuckDB-Wasm module is present; current dashboard data loading uses CSV/JSON fetches |
+| External data sources | OpenAQ v3, Open-Meteo Archive, Copernicus CDS/ERA5, Google Earth Engine, NASA FIRMS, OpenStreetMap Overpass |
+| Build and tests | setuptools, npm, pytest, TypeScript |
+| Database / hosting | No server database or hosting platform is configured |
+
+LightGBM, SHAP, PyTorch, Earth Engine, CDS API, and optional geospatial packages are not
+installed by the core requirements. The Python pipeline uses its documented fallbacks
+where available.
+
+## Architecture and data flow
+
+There is no application backend that serves a REST API. The Python CLI is the data and
+model pipeline; the dashboards read files from disk or static public assets.
+
+```mermaid
+flowchart LR
+  subgraph Sources[Data sources]
+    Demo[Synthetic generator]
+    AQ[OpenAQ station observations]
+    WX[Open-Meteo or ERA5]
+    SAT[Earth Engine satellite]
+    FI[NASA FIRMS]
+    RD[OSM Overpass roads]
+  end
+
+  subgraph Pipeline[Python pipeline]
+    Build[Build hourly dataset]
+    Feat[Feature engineering and leakage guards]
+    Train[Baselines and model evaluation]
+    Explain[Attribution and source proxies]
+  end
+
+  subgraph Files[File artifacts]
+    Dataset[(data/processed/dataset.csv)]
+    Artifacts[(artifacts/ CSV, JSON, and model files)]
+    Snapshot[(frontend/public/data/ CSV and JSON snapshot)]
+  end
+
+  Demo --> Build
+  AQ --> Build
+  WX --> Build
+  SAT --> Build
+  FI --> Build
+  RD --> Build
+  Build --> Dataset --> Feat --> Train --> Artifacts
+  Dataset --> Explain
+  Train --> Explain --> Artifacts
+  Artifacts -. manual snapshot refresh .-> Snapshot
+  Dataset --> Streamlit[Streamlit dashboard]
+  Artifacts --> Streamlit
+  Snapshot --> Next[Next.js frontend]
+```
+
+### Data flow details
+
+1. `build` creates a deterministic synthetic dataset or combines live observations with
+   available weather and optional satellite, fire, and road features.
+2. `features.py` creates station-aware historical features and future targets for the
+   configured forecast horizon. Satellite features are removed when they would refer to
+   information unavailable at the forecast time.
+3. `train` evaluates baselines and configured models on a time-based split, and can also
+   run LOSO validation. It writes metrics and predictions to `artifacts/`.
+4. `explain` computes attribution and heuristic proxy summaries from the dataset and
+   model outputs.
+5. The Streamlit dashboard reads local pipeline outputs. The Next.js frontend fetches
+   static files from `frontend/public/data/`; regenerating backend artifacts does not
+   update this snapshot automatically.
+
+## Project structure
+
+```text
+kolkata-pm25/
+├── config.example.yaml          # Default project and provider settings
+├── .env.example                 # Optional provider credential names
+├── requirements.txt             # Core Python and test dependencies
+├── pyproject.toml               # Python packaging and pytest configuration
+├── Makefile                     # Python and frontend convenience targets
+├── src/pm25/
+│   ├── cli.py                   # build, train, explain, all, and app commands
+│   ├── config.py                # Built-in defaults, YAML, and .env loading
+│   ├── features.py              # Feature engineering and leakage guards
+│   ├── stations.py              # Station registry and approximate coordinates
+│   ├── data/                    # Source adapters and synthetic data generator
+│   ├── models/                  # Baselines, GBDT, optional sequence model, evaluation
+│   ├── explain/                 # Feature importance, attribution, and proxies
+│   └── app/dashboard.py         # Streamlit dashboard
+├── frontend/
+│   ├── src/app/                 # Next.js app entry point and layout
+│   ├── src/components/          # Views, charts, map, and UI components
+│   ├── src/lib/                 # Static data loaders, queries, state, types
+│   └── public/                  # GeoJSON and checked-in data snapshot
+├── docs/                        # Methodology, data dictionary, report outline
+└── tests/                       # Python unit tests and dashboard smoke test
+```
+
+Generated `data/raw/`, `data/processed/`, and `artifacts/` directories are git-ignored.
+Their files are created when you run the pipeline. The frontend's `public/data/` snapshot
+is checked in separately.
+
+## Installation
+
+### Prerequisites
+
+- Python 3.10 or newer.
+- Node.js and npm compatible with the versions required by the lockfile (the exact
+  supported Node.js range is not declared in `package.json`).
+- Git, if cloning the project.
+
+### Python pipeline and Streamlit app
+
+From the repository root:
 
 ```bash
-pip install -r requirements.txt
-python -m pm25.cli all          # build -> train -> explain  (~2 min)
-python -m pm25.cli app          # dashboard at localhost:8501
-make test                       # unit tests + dashboard smoke test
+git clone <repository-url>
+cd kolkata-pm25
+python -m venv .venv
 ```
 
-That runs on a deterministic synthetic dataset. Same schema, same causal structure, no
-network. When you have keys: `python -m pm25.cli build --mode live`.
+Activate the environment, then install the dependencies and project in editable mode:
 
----
-
-## Why the structure looks like this
-
-**Satellite AOD is not hourly.** MODIS/MAIAC gives one retrieval per day at 1 km, TROPOMI
-gives one overpass around 13:30 local. So "hourly PM2.5" means: *daily* satellite features
-broadcast onto every hour, with hourly variation coming from meteorology, time-of-day and
-lagged PM2.5. Anything else is a methodological error, and it is the first thing a reviewer
-will catch.
-
-**AOD is missing precisely when you need it.** Cloud cover removes the retrieval, and cloudy
-days are not a random sample. The pipeline therefore carries an `aod_missing` flag and the
-Robustness tab quantifies the accuracy hit rather than hiding it.
-
-**No co-pollutant features.** PM10, NO2, SO2, CO and O3 are in the dataset but never enter
-the model. They are measured at the same station and are correlated with PM2.5 by
-construction — including them inflates R² with no operational value. They are used only for
-the source proxies, which is exactly what they are good for.
-
-**No random train/test split.** Consecutive hours are autocorrelated. The pipeline uses a
-time split (train on earlier years, test on the latest) plus leave-one-station-out. Random
-splits produce R² that collapses the moment you try it on next month's data.
-
----
-
-## Three layers
-
-| Layer | Status | What it gives you |
-|---|---|---|
-| **Core** | done | Hourly PM2.5 estimation from AOD, weather, fires, time |
-| **Extension** | done | 1 h / 6 h / 24 h forecasts, four model families compared |
-| **Stretch** | done | SHAP attribution + rule-based source proxies + Streamlit dashboard |
-| **Tests** | done | 44 pytest cases + a real-render dashboard smoke test |
-
-Skipped on purpose: PMF, low-cost sensor calibration, street-level mapping. All three need
-speciated filter data or a sensor network that isn't publicly available for Kolkata.
-
----
-
-## Pipeline
-
-```
-data/                    features/               models/                explain/
-├── openaq.py    ──┐     ├── lags 0/1/3/6/12/24  ├── persistence       ├── SHAP
-├── weather.py     │     ├── rolling 6/24        ├── climatology       ├── permutation
-├── satellite.py   ├──►  ├── cyclical hour/month ├── ridge             └── proxies
-├── fires.py       │     ├── upwind fire        ├── quantile GBDT
-├── roads.py       │     └── leakage guards     └── LSTM / CNN-LSTM
-└── synthetic.py ──┘
+```powershell
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
-`build` → `data/processed/dataset.csv`
-`train` → `artifacts/metrics.json`, `artifacts/predictions.csv`, `artifacts/models/*.joblib`
-`explain` → `artifacts/seasonal_importance.csv`, `artifacts/proxy_agreement.csv`
+```bash
+# macOS / Linux
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m pip install -e .
+```
 
----
+The editable install exposes the `pm25` package to the CLI. Alternatively, Makefile
+targets set `PYTHONPATH=src` (use Make from Git Bash, WSL, or a Unix shell).
 
-## What the demo run actually produces
+### Next.js frontend
 
-Real output from `python -m pm25.cli all` on the synthetic dataset (**2026-11-02 audit pass**). **These are pipeline
-checks, not findings** — but the *shape* is what you should expect from real data, and it
-is the shape your report has to explain.
+In a second terminal, from the repository root:
 
-Time split: train 2025 (Mar–Dec), test 2026 (Jan–Oct) — the verified live coverage
-window, also the demo default. n ≈ 27,800 test hours per horizon. Episode recall is
-computed on the winter slice (Nov–Feb), where the threshold crossings actually cluster.
+```bash
+cd frontend
+npm ci
+npm run dev
+```
 
-| Horizon | Model | RMSE | MAE | R² | Episode recall | PI80 |
-|---|---|---|---|---|---|---|
-| **+1 h** | persistence | 14.53 | 10.24 | 0.871 | 0.76 | — |
-| | climatology | 29.92 | 19.34 | 0.452 | 0.00 | — |
-| | ridge | 13.54 | 9.53 | 0.888 | 0.79 | — |
-| | **GBDT** | **12.74** | **8.73** | **0.901** | 0.73 | 0.784 |
-| **+6 h** | persistence | 29.46 | 21.77 | 0.468 | 0.49 | — |
-| | **GBDT** | **18.17** | **12.34** | **0.798** | 0.41 | 0.778 |
-| **+24 h** | persistence | 24.50 | 16.98 | 0.632 | 0.54 | — |
-| | ridge | 19.28 | 13.62 | 0.772 | 0.51 | — |
-| | **GBDT** | **19.40** | **13.20** | **0.769** | 0.30 | 0.772 |
+Open [http://localhost:3000](http://localhost:3000). The frontend reads the files already
+checked into `frontend/public/data/`; it does not need the Python pipeline running to
+render that snapshot.
 
-Four things worth reading off this table:
+## Configuration and environment variables
 
-1. **Persistence collapses from R² 0.87 to 0.47 by +6 h.** That is the honest reason a
-   model exists at all. At +1 h it is a serious competitor.
-2. **PI80 coverage is 0.77–0.78 against a nominal 0.80.** The intervals are slightly
-   overconfident. Reporting that instead of hiding it is the point.
-3. **Episode recall falls with lead time** (0.73 → 0.41 → 0.30) while overall R² falls
-   much less — and by +24 h persistence actually catches *more* episodes (0.54) than the
-   GBDT (0.30). A model can look fine on RMSE and still lose the smog days; that trade
-   is the thing to report, not hide.
-4. **Climatology is terrible here (R² ≈ 0.45) because the window starts in March.**
-   Train-2025 never sees January or February, so its station × month × hour table has no
-   winter entries and falls back to the global mean exactly when it matters. The GBDT
-   interpolates through `month_sin/cos` and does not care. Any window that does not
-   start on 1 January has this artifact — check for it before quoting climatology.
-
-### Leave-one-station-out
-
-| Horizon | Mean LOSO R² | Mean LOSO RMSE |
-|---|---|---|
-| +1 h | 0.903 | 12.35 |
-| +6 h | 0.798 | 17.83 |
-| +24 h | 0.763 | 19.34 |
-
-Per-station spread is small in the demo (0.756–0.906) **because the synthetic stations share
-one generating function**. On live data expect LOSO to drop meaningfully below the time-split
-number — that gap *is* the spatial-generalisation story, and it is the number to quote.
-
-### Attribution
-
-Top model drivers: `month_cos`, `aod`, `fire_upwind`, `ventilation`, `hour_sin`, `pbl_inv`.
-
-9 of 20 season × proxy pairs are supported by the model's own importances:
-
-| Season | Proxy | Share of hours | Supported by model |
-|---|---|---|---|
-| post-monsoon | biomass | 48% | ✅ `fire_upwind` in top-5 |
-| post-monsoon | background | 34% | ✅ `pbl` |
-| pre-monsoon | dust | 15% | ✅ `ventilation` |
-| pre-monsoon | traffic | 21% | ✅ `hour_sin` |
-| monsoon | background | 72% | ✅ `ventilation` |
-| winter | traffic | 28% | ✅ `hour_sin`, `hour_cos` |
-
-The unsupported pairs matter as much as the supported ones — `secondary` essentially never
-fires in this dataset (≤5% of hours everywhere), and winter dust (20% of hours) finds none of
-its expected drivers in the model's winter top-5, which leans on humidity and ventilation
-instead. The model does not pretend otherwise, and neither should the report.
-
----
-
-## Models
-
-| Model | Role |
-|---|---|
-| Persistence | "tomorrow = today". The bar everything must clear. |
-| Climatology | station × month × hour mean. Beats persistence in stable seasons. |
-| Ridge | linear baseline on the identical feature matrix, so the GBDT gap is fair. |
-| **Quantile GBDT** | main model. Three models at q10/q50/q90 give an 80% interval. |
-| LSTM / CNN-LSTM | tests whether temporal structure beyond engineered lags helps. |
-
-LightGBM is used when installed, otherwise scikit-learn's `HistGradientBoostingRegressor`
-— which also supports `loss="quantile"`, so prediction intervals work either way.
-
----
-
-## Uncertainty, and why it is cheap here
-
-`quantile_fix` trains three models instead of one and sorts them per row to remove quantile
-crossing. The output is an 80% prediction interval and a `pi80_coverage` metric — the
-fraction of observed values that actually fall inside. A calibrated model lands near 0.80.
-That is a one-number answer to "how much should I trust this?" and it costs one extra fit.
-
----
-
-## Source attribution
-
-The honest ceiling without speciation:
-
-1. **SHAP** on an attribution model that excludes autoregressive PM2.5 lags. Without that
-   exclusion, lag-1 dominates everything and you learn nothing about sources.
-2. **Rule-based proxies** over co-pollutants and meteorology:
-   - *biomass* — upwind FIRMS detections in the top 15% for that station
-   - *dust* — PM10/PM2.5 ≥ 2.6, RH < 62%, wind ≥ 2.5 m/s
-   - *traffic* — rush hour + weekday + near a major road + high NO2
-   - *secondary* — RH ≥ 70% + elevated O3 + low wind
-3. **Agreement check** — for each season, does a proxy's expected drivers appear in the
-   model's top-5 SHAP features? This is the part that makes the project convincing: two
-   independent methods, built from different data, telling the same seasonal story.
-
-It is a consistency argument, not proof. Say so in the report — it reads as rigour, not
-weakness.
-
----
-
-## Validation protocol
-
-| Split | Purpose |
-|---|---|
-| Time split (`test_year`) | Generalisation forward in time |
-| Leave-one-station-out | Generalisation to an unmonitored site |
-| Winter episode metrics | Recall + false alarm ratio above 120 µg/m³ |
-| PI80 coverage | Interval calibration |
-| AOD-missing slice | Honest accuracy when the satellite is blind |
-
-Metrics: RMSE, MAE, R², bias, MAPE, plus episode recall/FAR.
-
----
-
-## Going live
+The CLI has built-in defaults; `config.yaml` is optional. To customize the defaults,
+copy the example config and edit it:
 
 ```bash
 cp config.example.yaml config.yaml
 cp .env.example .env
-# fill OPENAQ_API_KEY, GEE_PROJECT, FIRMS_MAP_KEY (all free)
-# optionally: earthengine authenticate ; ~/.cdsapirc for ERA5
-python -m pm25.cli build --mode live
 ```
 
-**OpenAQ rate limits (free tier): 60 requests/min, 2,000/hour.** The client throttles
-itself below the minute cap (a ~20-month build takes ~10 minutes) and backs off using
-`x-ratelimit-reset` when the hour cap bites. Every fetched 30-day chunk is cached under
-`data/raw/openaq_cache/` — if a run dies or gives up, just rerun the same command and
-it resumes from disk instead of re-paying the quota.
+On PowerShell use `Copy-Item config.example.yaml config.yaml` and
+`Copy-Item .env.example .env`. Both local files are ignored by Git. The demo mode needs
+no environment variables.
 
-**Live coverage reality (verified 2026-11):** CPCB/WBPCB stations on OpenAQ often carry
-*several* sensors per pollutant — retired instruments and their replacements. The old
-Kolkata sensors stopped reporting years ago and the replacement generation started
-**~2025-02-18** (Jadavpur, Ballygunge); Rabindra Bharati's PM2.5 has no recent data at
-all. Requesting 2023–2024 therefore returns nothing — the client tries every sensor
-listed for a pollutant and skips dead ones, and the config defaults already use the
-verified window, so the bare commands work:
+| Variable / credential | Purpose | Required? | Notes |
+|---|---|---:|---|
+| `OPENAQ_API_KEY` | OpenAQ v3 station measurements | For live ground observations | Read by the OpenAQ adapter. |
+| `GEE_PROJECT` | Google Earth Engine project | Only when Earth Engine satellite data is enabled | Earth Engine authentication must also be configured. |
+| `FIRMS_MAP_KEY` | NASA FIRMS fire detections | Optional | Without it, fire features are set to zero. |
+| `CDSAPI_KEY` | Listed in `.env.example` for CDS/ERA5 | Not read directly by this code | Configure CDS credentials using the `cdsapi`-supported `~/.cdsapirc` file as described in the example comments. |
+| `PM25_ROOT` | Root directory used by the Streamlit dashboard to locate `data/processed/` and `artifacts/` | Optional | Defaults to the repository root inferred from the dashboard file. |
+
+The Open-Meteo weather provider is the default and needs no API key. Optional provider
+selection and date/station settings live in `config.yaml`; inspect
+[config.example.yaml](config.example.yaml) for the available settings. Never commit real
+credentials.
+
+## Usage
+
+### Run the complete demo pipeline
 
 ```bash
-python -m pm25.cli build --mode live    # 2025-03-01 .. 2026-10-31 (default)
-python -m pm25.cli train                # test_year 2026 (default)
+python -m pm25.cli all
+```
+
+This runs demo dataset generation, model training/evaluation, and attribution in sequence.
+To run one step at a time:
+
+```bash
+python -m pm25.cli build --mode demo
+python -m pm25.cli train
+python -m pm25.cli explain
+python -m pm25.cli app
+```
+
+The Streamlit app opens at `http://localhost:8501`. It reads generated files; run the
+pipeline first to populate them. Use the sidebar to filter stations and date range, then
+inspect the Overview, Model, Explainability, Sources, Robustness, and Method tabs.
+
+Useful CLI options:
+
+```bash
+python -m pm25.cli --help
+python -m pm25.cli build --mode live --start 2025-03-01 --end 2026-10-31
+python -m pm25.cli train --horizons 1,6,24 --test-year 2026
+python -m pm25.cli train --quick                 # smaller/faster run, skips LOSO
+python -m pm25.cli train --deep                  # include optional sequence model
+python -m pm25.cli train --no-loso               # skip leave-one-station-out evaluation
+python -m pm25.cli app --port 8502
+```
+
+Options can also take `--config path` and `--root path`. Run `python -m pm25.cli <command>
+--help` for command-specific options.
+
+### Run the frontend
+
+After `npm ci` in `frontend/`, `npm run dev` starts the local development server. The
+navigation offers six panels: Overview & Map, Forecasting & Benchmarks, Causal
+Attribution, Source Proxies, Robustness & Satellite, and What-If Simulator. Use the
+station and horizon controls where shown. The simulator exposes sliders for atmospheric
+and transport assumptions and explicitly labels its output as heuristic.
+
+### Run with live data
+
+Set the relevant credentials, edit the providers and date window in `config.yaml`, then
+run:
+
+```bash
+python -m pm25.cli build --mode live
+python -m pm25.cli train
 python -m pm25.cli explain
 ```
 
-| Source | Provides | Cost |
-|---|---|---|
-| OpenAQ v3 | CPCB station PM2.5, PM10, NO2, SO2, CO, O3 | free key |
-| Open-Meteo | temp, RH, wind, rain, cloud (ERA5 underneath) | free, no key |
-| ERA5 via CDS | + boundary layer height — **worth the extra step** | free key |
-| Google Earth Engine | MAIAC AOD, TROPOMI NO2 | free, needs auth |
-| NASA FIRMS | fire detections | free MAP_KEY |
-| Overpass / OSM | road distance per station | free |
+The checked-in default live window is 2025-03-01 through 2026-10-31 with a 2026 test
+year. Coverage is station- and sensor-dependent; inspect logs and resulting data before
+interpreting scores. Optional data providers can fail or be skipped when unavailable.
 
-Optional packages are commented in `requirements.txt`. Every adapter raises a clear,
-actionable error instead of a stack trace if its key or package is missing.
+## Data and artifacts
 
----
+The build output is a station-hour table. See the [data dictionary](docs/data_dictionary.md)
+for the available fields and units.
 
-## Layout
+| Output | Contents |
+|---|---|
+| `data/processed/dataset.csv` | Assembled station-hour observations and source features |
+| `artifacts/metrics.json` | Model metrics by forecast horizon, with LOSO information when run |
+| `artifacts/predictions.csv` | Held-out predictions and diagnostics |
+| `artifacts/models/` | Serialized trained estimators |
+| `artifacts/importance*.csv` | Feature-importance outputs |
+| `artifacts/seasonal_importance.csv` | Seasonal importance summaries |
+| `artifacts/proxy_*.csv` | Proxy prevalence, concentration, and agreement outputs |
+| `artifacts/attribution_summary.json` | Summary of model drivers and attribution caveats |
+| `frontend/public/data/` | Separate static copy consumed by the Next.js frontend |
 
-```
-kolkata-pm25/
-├── config.example.yaml
-├── requirements.txt
-├── src/pm25/
-│   ├── cli.py            entry point
-│   ├── config.py         dot-path config with baked-in defaults
-│   ├── stations.py       station registry (VERIFY the coordinates)
-│   ├── features.py       engineering + leakage guards
-│   ├── data/             adapters + demo generator
-│   ├── models/           baselines, gbdt, deep, evaluate, train
-│   ├── explain/          importance, proxies, attribution
-│   └── app/dashboard.py  Streamlit, 6 tabs
-├── tests/                pytest (leakage guards, metrics, proxies) + dashboard smoke test
-└── docs/
-    ├── methodology.md
-    ├── data_dictionary.md
-    └── report_outline.md
-```
+For +24 h prediction, same-day AOD is not used as a future feature. PM2.5 lags and rolling
+features are grouped by station and shifted to prevent using future values. These design
+choices are described in [docs/methodology.md](docs/methodology.md).
 
----
+## API and database
 
-## Verification & maintenance
+There is no application REST/GraphQL API, user account system, or database schema in this
+repository. The pipeline exchanges data through CSV and JSON files. The browser frontend
+fetches static files under `/data/`; DuckDB-Wasm query helpers exist in the source, but
+the current views load CSV/JSON directly and no Parquet export command is implemented.
+
+The project connects to third-party data services only when their live adapters are used:
+OpenAQ v3, Open-Meteo Archive, CDS/ERA5 (optional), Earth Engine (optional), NASA FIRMS
+(optional), and OpenStreetMap Overpass (optional). There are no project-owned API
+endpoints to document.
+
+## Security and privacy
+
+- API credentials are read from local environment/configuration and should stay in ignored
+  `.env`/`config.yaml` files or provider-specific credential files. `.env.example`
+  contains blank values only.
+- The Next.js config adds browser security headers, including a Content Security Policy,
+  `X-Content-Type-Options`, `X-Frame-Options`, and `Referrer-Policy`.
+- No authentication, authorization, user profile, or personal-data workflow is
+  implemented. The application primarily handles air-quality observations and generated
+  model artifacts.
+- Review provider terms and data licensing before redistributing live-source data.
+
+## Testing
+
+The Python suite uses pytest. Tests cover utility behavior, OpenAQ handling, feature
+leakage safeguards, model evaluation/GBDT behavior, fire features, source proxies, and a
+Streamlit dashboard smoke check.
 
 ```bash
-make test            # pytest + dashboard smoke test
-python -m pytest tests -q   # 44 tests, all passing
+python -m pytest tests -q
 ```
 
-`make all` reproduces the demo numbers in this README: build → train → explain.
-The dashboard (`python -m pm25.cli app`) caches plot figures, so after `train` or
-`explain` reruns it serves the freshly generated artifacts automatically — and it warns
-rather than crashing if filters select no rows or the AOD column is missing (live mode
-without GEE).
+Or run the Make target from a compatible shell:
 
-## Commit history
+```bash
+make test
+```
 
-`f31b4ee` Initial commit — pipeline, leakage guards, pytest suite
-`c21fa0e` OpenAQ client: rate-limit patience + resumable chunk cache
-`66401da` OpenAQ: per-pollutant sensor fallback + live coverage guidance
-`0f40ca1` Live-data fixes: sensor fallback hardening, pandas 3 dtype guard, hourly collapse
-`c28ce89` Update config defaults to verified live coverage window (2025-03..2026-10)
-`c72bd4a` Regenerate README demo tables for the new default window (2025-03..2026-10)
-`f101864` Dashboard: cache every plot and use stat cards so live data loads in seconds
-`6f061d2` Audit pass 2026-11-02: fix CLI arg ordering, stale-artifact caching,
-          pandas 4 deprecations, remove dead code
+`make test` runs pytest and `tests/smoke_dashboard.py`. No dedicated frontend test or
+lint script is configured. The frontend package does define `npm run build` for a
+production build.
 
----
+## Deployment
 
-## Known limitations
+No deployment platform, public URL, container setup, or CI release workflow is configured
+in this repository. For a production build of the frontend:
 
-1. AOD is daily, not hourly — hourly variation is meteorology + lags.
-2. AOD is missing when cloudy, and that missingness is informative.
-3. Source proxies are heuristics. No PMF, no speciation, no proof.
-4. Station coordinates in `stations.py` are approximate — verify before publishing.
-5. Ground truth is a monitor, not personal exposure.
-6. The demo dataset is synthetic. Any number produced in demo mode is a pipeline check,
-   never a finding.
+```bash
+cd frontend
+npm ci
+npm run build
+npm start
+```
+
+The runtime must serve the Next.js application and the files in `public/`. Before
+publishing, update the static data snapshot intentionally, validate data provenance, and
+configure hosting for the application's security headers. The Streamlit dashboard can be
+launched with `python -m pm25.cli app`; hosting and secrets management for a public
+deployment are not specified here.
+
+## Limitations and next steps
+
+### Current limitations
+
+- Demo output is synthetic and must not be presented as measured Kolkata results.
+- Approximate station coordinates and station metadata need verification.
+- OpenAQ coverage is uneven; retired/replacement sensors and gaps affect the usable period.
+- Daily satellite retrievals do not provide hourly observations; cloud cover causes
+  informative AOD gaps.
+- Open-Meteo does not provide the boundary-layer-height feature; the ERA5 option requires
+  extra setup.
+- Source proxies are heuristic labels. They are not PMF, speciation analysis, or proof of
+  causal source contributions.
+- The frontend reads a static artifact snapshot that is not refreshed automatically.
+- The interactive frontend simulator is an illustrative formula, not the fitted model.
+- The Next.js map uses a simplified projected SVG and approximate station coordinates;
+  it is not a validated GIS product.
+
+### Useful future work
+
+- Verify station locations, monitor identities, and live coverage against authoritative
+  records.
+- Add a reproducible export/sync step from pipeline artifacts to frontend assets.
+- Connect the simulator to a versioned model inference interface or keep it clearly
+  separated as a teaching aid.
+- Add frontend tests and a documented deployment workflow.
+- Evaluate with additional time periods and stations, and improve calibration and
+  spatial generalization with better meteorological coverage.
+- Add verified screenshots, live demo, team, and project contact details.
+
+## Hackathon framing
+
+| Item | Project framing |
+|---|---|
+| Problem | Hourly surface PM2.5 estimation is difficult when ground monitors are sparse and satellite retrievals are intermittent and measure atmospheric columns. |
+| Proposed solution | Combine station history, meteorology, satellite context, fire transport, and temporal features; evaluate forecast horizons and expose uncertainty and interpretation outputs. |
+| Distinctive angle | Leakage safeguards, multiple baselines, time and station holdouts, uncertainty coverage, and an explicit comparison between model drivers and independently defined heuristic proxies. |
+| Intended audience | Air-quality researchers, students, and analysts exploring monitoring and forecasting methods. |
+| Practical impact | A reproducible prototype for examining where the data and modeling approach work or fail; it is not an operational public-health alert service. |
+| Scalability | More stations, validated inputs, stronger calibration, and an automated artifact pipeline could extend the prototype. |
+
+No hackathon name, track, team, sponsor, award, or impact result is specified in the
+repository.
+
+## Contributing
+
+Contributions are welcome. No project-specific contribution policy or code of conduct is
+currently present. A typical contribution workflow is:
+
+1. Fork the repository and create a focused branch.
+2. Install the Python dependencies and, for frontend changes, run `npm ci` in
+   `frontend/`.
+3. Make the change and add or update tests when behavior changes.
+4. Run `python -m pytest tests -q`; for frontend changes, run `npm run build` from
+   `frontend/`.
+5. Open a pull request describing the change, validation performed, data assumptions, and
+   any effect on generated artifacts.
+
+Report bugs through the repository's issue tracker once its public repository URL is
+configured. Do not include API keys or private data in issues.
+
+## License, credits, and contact
+
+No license file or license declaration is present. Unless a license is added, the
+project's reuse and redistribution terms are **not specified**. Add a license before
+inviting external reuse.
+
+The project integrates third-party services and data providers listed above. Consult
+their own terms and attribution requirements when using live data. No team-member names,
+maintainer contact, public repository URL, or hosted demo URL are documented in the
+project files.
+
+### Further documentation
+
+- [Methodology](docs/methodology.md)
+- [Data dictionary](docs/data_dictionary.md)
+- [Report outline](docs/report_outline.md)
+- [Frontend README](frontend/README.md)
