@@ -63,6 +63,7 @@ def run(
     df["time"] = pd.to_datetime(df["time"], utc=True)
 
     horizons = horizons if horizons is not None else cfg.get("models.horizons", [1, 6, 24])
+    assert horizons is not None
     test_year = int(test_year or cfg.get("models.test_year", 2026))
 
     artifacts = cfg.path("artifacts")
